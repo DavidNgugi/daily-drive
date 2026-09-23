@@ -92,7 +92,7 @@ function App() {
           <button className={tab === "settings" ? "nav active" : "nav"} onClick={() => setTab("settings")}><span>⚙</span> Alarm settings</button>
           <div className="side-bottom"><div className="mini-label">THE GOAL</div><div className="goal-numbers">99 <span>→</span> 90 <small>kg</small></div><p>12 weeks, one day at a time.</p></div>
         </aside>
-        <main className="content">
+        <main className={`content ${tab}-view`}>
           {!state ? <div className="loading">Loading your plan…</div> : <>
             {state.alarmActive && <div className="alarm-banner"><span className="alarm-dot" /> IT'S WORKOUT TIME <span className="alarm-sub">The alarm keeps sounding until you complete today's session.</span></div>}
             {error && <div className="error" role="alert">{error}</div>}
