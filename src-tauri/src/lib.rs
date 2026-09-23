@@ -4,23 +4,54 @@ use std::{collections::BTreeMap, fs, path::PathBuf, process::Command, sync::Mute
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 
-const START: &str = "2026-09-07";
-const END: &str = "2026-11-28";
-
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct Measurement { weight: Option<f32>, waist: Option<f32> }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PlanConfig {
+    start_date: String,
+    end_date: String,
+    start_weight: f32,
+    target_weight: f32,
+}
+
+impl Default for PlanConfig {
+    fn default() -> Self {
+        Self {
+            start_date: "2026-09-24".into(),
+            end_date: "2026-11-28".into(),
+            start_weight: 99.0,
+            target_weight: 90.0,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct MealLog { breakfast: String, lunch: String, dinner: String, snacks: String }
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 struct SavedData {
     alarm_time: String,
+    tracking_since: String,
     completed: Vec<String>,
+    skipped: BTreeMap<String, String>,
     measurements: BTreeMap<String, Measurement>,
+    meals: BTreeMap<String, MealLog>,
+    plan: PlanConfig,
 }
 
 impl Default for SavedData {
-    fn default() -> Self { Self { alarm_time: "07:00".into(), completed: vec![], measurements: BTreeMap::new() } }
+    fn default() -> Self {
+        Self {
+            alarm_time: "07:00".into(), tracking_since: Local::now().date_naive().to_string(),
+            completed: vec![], skipped: BTreeMap::new(),
+            measurements: BTreeMap::new(), meals: BTreeMap::new(), plan: PlanConfig::default(),
+        }
+    }
 }
 
 struct AppState { data: Mutex<SavedData>, path: PathBuf, alarm_active: Mutex<bool> }
@@ -28,25 +59,29 @@ struct AppState { data: Mutex<SavedData>, path: PathBuf, alarm_active: Mutex<boo
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Snapshot {
-    today: String, alarm_time: String, completed: Vec<String>,
-    measurements: BTreeMap<String, Measurement>, alarm_active: bool,
+    today: String, alarm_time: String, tracking_since: String, completed: Vec<String>,
+    skipped: BTreeMap<String, String>, measurements: BTreeMap<String, Measurement>,
+    meals: BTreeMap<String, MealLog>, plan: PlanConfig, alarm_active: bool,
     in_plan: bool, rest_day: bool,
 }
 
-fn plan_day(date: NaiveDate) -> bool {
-    let start = NaiveDate::parse_from_str(START, "%Y-%m-%d").unwrap();
-    let end = NaiveDate::parse_from_str(END, "%Y-%m-%d").unwrap();
-    date >= start && date <= end
+fn plan_day(date: NaiveDate, plan: &PlanConfig) -> bool {
+    date.to_string() >= plan.start_date && date.to_string() <= plan.end_date
+}
+
+fn workout_day(date: NaiveDate, plan: &PlanConfig) -> bool {
+    plan_day(date, plan) && date.weekday() != Weekday::Sun
 }
 
 fn snapshot(state: &AppState) -> Snapshot {
     let date = Local::now().date_naive();
     let data = state.data.lock().unwrap().clone();
     Snapshot {
-        today: date.to_string(), alarm_time: data.alarm_time,
-        completed: data.completed, measurements: data.measurements,
+        today: date.to_string(), alarm_time: data.alarm_time, tracking_since: data.tracking_since,
+        completed: data.completed, skipped: data.skipped, measurements: data.measurements,
+        meals: data.meals, plan: data.plan.clone(),
         alarm_active: *state.alarm_active.lock().unwrap(),
-        in_plan: plan_day(date), rest_day: date.weekday() == Weekday::Sun,
+        in_plan: plan_day(date, &data.plan), rest_day: date.weekday() == Weekday::Sun,
     }
 }
 
@@ -77,11 +112,30 @@ fn set_alarm_time(app: tauri::AppHandle, state: tauri::State<AppState>, time: St
 
 #[tauri::command]
 fn complete_today(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<Snapshot, String> {
-    let date = Local::now().date_naive();
-    if !plan_day(date) || date.weekday() == Weekday::Sun { return Err("No workout is scheduled today.".into()); }
-    let today = date.to_string();
+    set_workout_status(app, state, Local::now().date_naive().to_string(), "completed".into(), None)
+}
+
+#[tauri::command]
+fn set_workout_status(app: tauri::AppHandle, state: tauri::State<AppState>, date: String, status: String, reason: Option<String>) -> Result<Snapshot, String> {
+    let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|_| "Invalid date")?;
     let mut data = state.data.lock().unwrap();
-    if !data.completed.contains(&today) { data.completed.push(today); data.completed.sort(); }
+    if !workout_day(parsed, &data.plan) || parsed > Local::now().date_naive() {
+        return Err("Choose a scheduled workout day up to today.".into());
+    }
+    if !matches!(status.as_str(), "completed" | "skipped" | "clear") {
+        return Err("Invalid workout status.".into());
+    }
+    data.completed.retain(|d| d != &date);
+    data.skipped.remove(&date);
+    match status.as_str() {
+        "completed" => { data.completed.push(date); data.completed.sort(); }
+        "skipped" => {
+            let note = reason.unwrap_or_default().trim().chars().take(160).collect();
+            data.skipped.insert(date, note);
+        }
+        "clear" => {}
+        _ => unreachable!(),
+    }
     save(&state, &data)?;
     drop(data);
     *state.alarm_active.lock().unwrap() = false;
@@ -92,12 +146,53 @@ fn complete_today(app: tauri::AppHandle, state: tauri::State<AppState>) -> Resul
 }
 
 #[tauri::command]
+fn save_plan(app: tauri::AppHandle, state: tauri::State<AppState>, plan: PlanConfig) -> Result<Snapshot, String> {
+    let start = NaiveDate::parse_from_str(&plan.start_date, "%Y-%m-%d").map_err(|_| "Invalid start date")?;
+    let end = NaiveDate::parse_from_str(&plan.end_date, "%Y-%m-%d").map_err(|_| "Invalid end date")?;
+    if end < start || (end - start).num_days() > 365 { return Err("Choose a challenge period of up to one year.".into()); }
+    if !(30.0..=300.0).contains(&plan.start_weight) || !(30.0..=300.0).contains(&plan.target_weight) {
+        return Err("Weight values must be between 30 and 300 kg.".into());
+    }
+    let mut data = state.data.lock().unwrap();
+    data.plan = plan;
+    save(&state, &data)?;
+    drop(data);
+    let result = snapshot(&state);
+    let _ = app.emit("state-changed", &result);
+    Ok(result)
+}
+
+#[tauri::command]
 fn save_measurement(app: tauri::AppHandle, state: tauri::State<AppState>, date: String, weight: Option<f32>, waist: Option<f32>) -> Result<Snapshot, String> {
     let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|_| "Invalid date")?;
-    if !plan_day(parsed) || parsed > Local::now().date_naive() { return Err("Choose a date within the plan up to today.".into()); }
     if weight.is_some_and(|v| !(30.0..=300.0).contains(&v)) || waist.is_some_and(|v| !(30.0..=250.0).contains(&v)) { return Err("Check your measurement values.".into()); }
     let mut data = state.data.lock().unwrap();
+    if !plan_day(parsed, &data.plan) || parsed > Local::now().date_naive() { return Err("Choose a date within the plan up to today.".into()); }
     data.measurements.insert(date, Measurement { weight, waist });
+    save(&state, &data)?;
+    drop(data);
+    let result = snapshot(&state);
+    let _ = app.emit("state-changed", &result);
+    Ok(result)
+}
+
+#[tauri::command]
+fn save_meals(app: tauri::AppHandle, state: tauri::State<AppState>, date: String, meals: MealLog) -> Result<Snapshot, String> {
+    let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|_| "Invalid date")?;
+    if [&meals.breakfast, &meals.lunch, &meals.dinner, &meals.snacks].iter().any(|v| v.chars().count() > 250) {
+        return Err("Keep each meal entry under 250 characters.".into());
+    }
+    let mut data = state.data.lock().unwrap();
+    if !plan_day(parsed, &data.plan) || parsed > Local::now().date_naive() { return Err("Choose a date within the plan up to today.".into()); }
+    let cleaned = MealLog {
+        breakfast: meals.breakfast.trim().into(), lunch: meals.lunch.trim().into(),
+        dinner: meals.dinner.trim().into(), snacks: meals.snacks.trim().into(),
+    };
+    if cleaned.breakfast.is_empty() && cleaned.lunch.is_empty() && cleaned.dinner.is_empty() && cleaned.snacks.is_empty() {
+        data.meals.remove(&date);
+    } else {
+        data.meals.insert(date, cleaned);
+    }
     save(&state, &data)?;
     drop(data);
     let result = snapshot(&state);
@@ -119,6 +214,7 @@ fn start_alarm_loop(app: tauri::AppHandle) {
     thread::spawn(move || {
         let mut last_sound = Instant::now() - Duration::from_secs(5);
         let mut last_focus = Instant::now() - Duration::from_secs(30);
+        let mut last_date = Local::now().date_naive();
         loop {
             let state = app.state::<AppState>();
             let now = Local::now();
@@ -126,9 +222,9 @@ fn start_alarm_loop(app: tauri::AppHandle) {
             let today = date.to_string();
             let due = {
                 let data = state.data.lock().unwrap();
-                plan_day(date) && date.weekday() != Weekday::Sun &&
+                workout_day(date, &data.plan) &&
                 now.format("%H:%M").to_string() >= data.alarm_time &&
-                !data.completed.contains(&today)
+                !data.completed.contains(&today) && !data.skipped.contains_key(&today)
             };
             let changed = {
                 let mut active = state.alarm_active.lock().unwrap();
@@ -139,8 +235,11 @@ fn start_alarm_loop(app: tauri::AppHandle) {
                     let _ = window.set_always_on_top(due);
                     if due { let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus(); }
                 }
+            }
+            if changed || date != last_date {
                 let _ = app.emit("state-changed", snapshot(&state));
             }
+            last_date = date;
             if due {
                 if last_focus.elapsed() >= Duration::from_secs(30) {
                     if let Some(window) = app.get_webview_window("main") {
@@ -167,6 +266,11 @@ pub fn run() {
             let login_marker = path.with_file_name("autostart-initialized");
             let data = fs::read(&path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
             app.manage(AppState { data: Mutex::new(data), path, alarm_active: Mutex::new(false) });
+            {
+                let state = app.state::<AppState>();
+                let data = state.data.lock().unwrap();
+                let _ = save(&state, &data);
+            }
             if !cfg!(debug_assertions) && !login_marker.exists() && app.autolaunch().enable().is_ok() {
                 let _ = fs::create_dir_all(login_marker.parent().unwrap());
                 let _ = fs::write(login_marker, "initialized");
@@ -180,7 +284,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_alarm_time, complete_today, save_measurement, launch_at_login, login_enabled])
+        .invoke_handler(tauri::generate_handler![get_state, set_alarm_time, complete_today, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
         .build(tauri::generate_context!())
         .expect("error while building daily-drive")
         .run(|app, event| {
@@ -191,4 +295,35 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_progress_loads_with_new_defaults() {
+        let old = r#"{"alarmTime":"07:00","completed":["2026-09-21"],"measurements":{"2026-09-21":{"weight":96.5,"waist":null}}}"#;
+        let saved: SavedData = serde_json::from_str(old).unwrap();
+        assert_eq!(saved.completed, ["2026-09-21"]);
+        assert_eq!(saved.measurements["2026-09-21"].weight, Some(96.5));
+        assert_eq!(saved.plan.start_weight, 99.0);
+        assert_eq!(saved.plan.start_date, "2026-09-24");
+        assert!(!saved.tracking_since.is_empty());
+        assert!(saved.skipped.is_empty());
+        assert!(saved.meals.is_empty());
+    }
+
+    #[test]
+    fn workout_days_follow_edited_plan_and_exclude_sundays() {
+        let plan = PlanConfig {
+            start_date: "2026-09-14".into(),
+            end_date: "2026-09-26".into(),
+            ..PlanConfig::default()
+        };
+        assert!(!workout_day(NaiveDate::from_ymd_opt(2026, 9, 12).unwrap(), &plan));
+        assert!(workout_day(NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(), &plan));
+        assert!(!workout_day(NaiveDate::from_ymd_opt(2026, 9, 20).unwrap(), &plan));
+        assert!(workout_day(NaiveDate::from_ymd_opt(2026, 9, 26).unwrap(), &plan));
+    }
 }

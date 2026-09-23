@@ -24,3 +24,135 @@
 .today-view .alarm-banner{margin-bottom:12px;padding:10px 14px}
 @media(max-width:850px){.today-view{padding:20px 24px}.today-view .two-col{grid-template-columns:1.16fr 1fr}}
 @media(max-width:690px){.today-view{padding:18px}.today-view .hero-card{display:block}.today-view .hero-title{margin-top:12px}.today-view .complete-button{margin-top:14px}.today-view .two-col{grid-template-columns:1fr}}
+
+/* Flexible plan dashboard */
+.today-view .charts-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.chart-card{height:112px;background:#f0f5e8;border:1px solid #e0ead8;border-radius:13px;padding:10px 14px;overflow:hidden}
+.chart-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:#729164;font-size:10px;font-weight:800;letter-spacing:.12em}
+.chart-heading strong{font:700 19px Outfit;letter-spacing:-.04em;color:#254330;white-space:nowrap}
+.chart-heading strong small{font:600 11px "DM Sans",sans-serif;letter-spacing:0;color:#7a9176}
+.chart-svg{width:100%;height:57px;display:block;margin:0}
+.chart-foot{display:flex;justify-content:space-between;gap:8px;align-items:center;color:#83957f;font-size:9px;white-space:nowrap}
+.chart-foot button{border:0;background:transparent;color:#4f7938;padding:0;font-size:10px;font-weight:800}
+.day-bars{height:57px;display:flex;align-items:end;justify-content:space-between;gap:7px;padding:3px 4px 0}
+.day-bar{height:100%;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:end;gap:3px}
+.day-bar small{font-size:9px;color:#889c83}
+.bar{display:block;width:100%;max-width:26px;height:28px;border-radius:5px;background:#d9e4d2}
+.bar-completed{height:43px;background:#9dce45}
+.bar-skipped{height:25px;background:#e8b26b}
+.bar-missed{height:25px;background:#d99383}
+.bar-pending{height:35px;background:#c3d9a4;border:1px dashed #8db569}
+.bar-rest,.bar-outside{height:9px;background:#dce5d6}
+.bar-future{height:18px;background:#e3ebdf}
+.legend-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:6px;margin-right:2px;background:#9dce45}
+.legend-dot:first-child{margin-left:0}.legend-dot.skipped{background:#e8b26b}.legend-dot.missed{background:#d99383}
+.today-view .hero-actions{grid-column:2;grid-row:2/4;align-self:center;display:flex;align-items:center;gap:10px;margin-top:9px}
+.today-view .hero-actions .complete-button{margin:0;padding:11px 13px;font-size:12px}
+.skip-button{border:0;background:transparent;color:#c9d4c7;font-size:11px;font-weight:700;white-space:nowrap}
+.skip-button:hover{text-decoration:underline}
+.inline-editor{display:flex;align-items:end;gap:10px;background:#fff8ed;border:1px solid #ead9bc;border-radius:10px;padding:10px 14px;margin-top:8px}
+.inline-editor label{flex:1;font-size:10px;font-weight:700;color:#7d816e}
+.inline-editor input{display:block;width:100%;border:1px solid #d9d8c8;border-radius:7px;padding:8px;margin-top:3px}
+.inline-editor button{border:0;background:#254832;color:#fff;border-radius:7px;padding:9px 12px;font-size:11px;font-weight:700}
+.inline-editor .quiet-button{background:transparent;color:#7d816e}
+.extra-meals{font-size:10px;color:#748475;line-height:1.4;margin:2px 0 6px}
+.today-view .log-food-button{border:0;background:#f3f8e9;border-radius:8px;padding:9px 11px;color:#547e3d;font-size:11px;font-weight:800;width:100%;text-align:left}
+.today-view .log-food-button:hover{background:#e6f2d1}
+.history-row{display:grid;grid-template-columns:120px 80px 1fr;align-items:center;gap:10px;min-height:38px;border-top:1px solid #edf1e9;font-size:11px}
+.history-status{text-transform:capitalize;color:#899487;font-weight:700}
+.history-status.completed{color:#4c8237}.history-status.skipped{color:#af743d}.history-status.missed{color:#b76c5a}
+.history-actions{display:flex;justify-content:flex-end;gap:5px}
+.history-actions button{border:1px solid #dfe9d7;background:#fff;border-radius:6px;color:#637c5c;padding:5px 8px;font-size:10px;font-weight:700}
+.progress-view .timeline{margin-top:15px}
+.progress-view .week-row{grid-template-columns:32px minmax(85px,1fr) 185px 130px}
+.progress-view .week-count{white-space:nowrap}
+.plan-settings{margin-bottom:20px}
+.plan-form{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.plan-form label{font-size:11px;font-weight:700;color:#809181}
+.plan-form input{display:block;width:100%;border:1px solid #dfe6da;border-radius:9px;padding:10px 12px;margin-top:6px;color:#24432f}
+.settings-subhead{font:700 21px Outfit;margin:24px 0 10px;color:#254330}
+.modal-backdrop{position:fixed;inset:0;background:#13251bb0;display:grid;place-items:center;padding:20px;z-index:20}
+.meal-modal{width:min(100%,490px);max-height:calc(100vh - 40px);overflow:auto;background:#fff;border-radius:18px;padding:24px;box-shadow:0 20px 70px #10241755}
+.modal-heading{display:flex;justify-content:space-between;align-items:start}
+.modal-heading h2{font:700 26px Outfit;color:#1b3026;margin:6px 0}
+.modal-close{border:0;background:transparent;color:#7c897e;font-size:26px;line-height:1}
+.meal-modal p{font-size:12px;color:#7d8d7d;line-height:1.5;margin:4px 0 14px}
+.meal-fields{display:grid;gap:10px}
+.meal-fields label{text-transform:capitalize;font-size:11px;font-weight:800;color:#74876e}
+.meal-fields input{display:block;width:100%;border:1px solid #dfe6da;border-radius:8px;padding:10px;margin-top:4px;color:#24432f}
+.modal-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:18px}
+.modal-actions .quiet-button{background:transparent;border:0;color:#798b78;font-size:12px;font-weight:700}
+@media(max-width:850px){.today-view .hero-actions{gap:4px}.today-view .hero-actions .complete-button{font-size:11px;padding:10px 9px}.skip-button{font-size:10px}}
+@media(max-width:690px){.today-view .charts-row{grid-template-columns:1fr}.today-view .hero-actions{margin-top:12px}.history-row{grid-template-columns:90px 65px 1fr}.progress-view .week-row{grid-template-columns:28px 1fr 130px}.progress-view .week-measure{display:none}}
+.bar-untracked{height:12px;background:#e8ece5}
+.history-status.untracked{color:#a8b0a7}
+
+/* Compact visual progress and plan browsing */
+.today-view .charts-row .chart-card{height:101px;padding:8px 12px}
+.today-view .charts-row .chart-svg{height:50px}
+.donut-body{display:flex;align-items:center;gap:11px;height:73px}
+.donut-body svg{width:72px;height:72px;flex:none}
+.donut-percent{font:800 17px Outfit;fill:#254330}
+.donut-body div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.donut-body strong{font:700 16px Outfit;color:#254330;white-space:nowrap}
+.donut-body span{font-size:10px;color:#6e8969}
+.donut-body small{font-size:9px;color:#9aaa96;white-space:nowrap}
+.heatmap-card{background:#fff;border:1px solid #e4ebe0;border-radius:12px;padding:8px 13px;margin-bottom:10px;height:91px}
+.heatmap-heading{display:flex;justify-content:space-between;align-items:center;color:#729164;font-size:10px;letter-spacing:.12em;font-weight:800}
+.heatmap-heading small{font-size:9px;letter-spacing:0;color:#9aaa96}
+.heatmap-content{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:5px}
+.heatmap-weeks{display:flex;gap:4px;overflow:hidden}
+.heatmap-week{display:flex;flex-direction:column;gap:1px}
+.heatmap-square{display:block;width:8px;height:8px;border-radius:2px;background:#e5eee0}
+.heatmap-square.completed{background:#91c943}.heatmap-square.skipped{background:#e8b26b}.heatmap-square.missed{background:#d99383}
+.heatmap-square.pending{background:#c7daa9}.heatmap-square.rest{background:#dfe6db}.heatmap-square.untracked{background:#ecefea}
+.heatmap-square.outside{background:transparent}.heatmap-square.future{background:#e5eee0}
+.heatmap-summary{text-align:right;display:flex;flex-direction:column;gap:2px;white-space:nowrap}
+.heatmap-summary b{font:700 14px Outfit;color:#2d5235}.heatmap-summary span{font-size:9px;color:#849b81}
+.today-view .intro{margin-bottom:10px}
+.today-view .hero-card{padding:15px 20px}
+.today-view .hero-title{margin-top:5px;font-size:23px}
+.today-view .two-col{margin-top:9px}
+.today-view .panel{padding:13px 18px}
+.today-view .exercise{padding:5px 0}
+.today-view .steps p{padding:4px 0 7px}
+.calendar-view,.meals-view,.progress-view,.settings-view{margin-top:0;align-self:flex-start}
+.calendar-view h1,.meals-view h1,.progress-view h1,.settings-view h1{font-size:36px;margin:8px 0 4px}
+.calendar-view .intro,.meals-view .intro,.progress-view .intro,.settings-view .intro{margin-bottom:16px}
+.calendar-layout{display:grid;grid-template-columns:1.38fr 1fr;gap:12px}
+.calendar-panel,.calendar-detail{padding:15px}
+.calendar-toolbar,.meal-week-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.calendar-toolbar strong,.meal-week-toolbar strong{font:700 15px Outfit;color:#284434}
+.calendar-toolbar button,.meal-week-toolbar button{border:1px solid #e2e9dd;background:#f7faF3;border-radius:7px;color:#4c7550;width:27px;height:27px;font-size:20px;line-height:1}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.calendar-weekday{text-align:center;color:#a0aca0;font-size:10px;font-weight:800;padding:2px 0 5px}
+.calendar-cell{height:48px;border:1px solid #e8eee4;background:#f8faf6;border-radius:6px;display:flex;flex-direction:column;text-align:left;padding:5px;color:#31513b;min-width:0;overflow:hidden}
+.calendar-cell b{font-size:11px}.calendar-cell small{font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.calendar-cell.other-month{opacity:.4}.calendar-cell.outside{background:#fff;color:#a8b3a7}
+.calendar-cell.completed{background:#e1f3c6;border-color:#add46c}.calendar-cell.skipped{background:#fff0db;border-color:#e1bc8b}.calendar-cell.missed{background:#fbece9;border-color:#e8b8ab}
+.calendar-cell.rest,.calendar-cell.untracked{background:#f0f3ee}.calendar-cell.selected{outline:2px solid #477d40;outline-offset:-2px}
+.calendar-detail h2{font:700 21px Outfit;color:#264633;margin:0 0 14px}
+.calendar-copy{font-size:12px;color:#8c9b8e}.detail-block{display:flex;flex-direction:column;gap:4px;border-top:1px solid #edf1e9;padding:9px 0;font-size:11px;line-height:1.35}
+.detail-block small{color:#89a17f;font-size:9px;letter-spacing:.08em;font-weight:800}.detail-block strong{font:700 15px Outfit;color:#24412f}
+.detail-block.actual{color:#4c7851}.detail-actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
+.detail-actions button{border:0;border-radius:6px;background:#284c35;color:#fff;font-size:10px;font-weight:700;padding:7px 9px}
+.detail-actions button.secondary{background:#edf3e5;color:#5d7854}
+.meals-plan-panel{padding:15px 18px}
+.meal-week-toolbar{justify-content:flex-start}.meal-week-toolbar strong{min-width:125px;text-align:center}.meal-week-toolbar .this-week{width:auto;height:auto;font-size:10px;padding:7px;margin-left:auto}
+.meal-plan-head,.meal-plan-row{display:grid;grid-template-columns:63px 1fr 1.3fr 67px;gap:9px;align-items:center}
+.meal-plan-head{color:#95a68e;font-size:9px;letter-spacing:.08em;font-weight:800;padding:8px 4px;border-bottom:1px solid #e6ece2}
+.meal-plan-row{min-height:61px;padding:7px 4px;border-bottom:1px solid #edf1e9;font-size:10px;line-height:1.35}
+.meal-plan-row.current{background:#f5faec;border-radius:7px}.meal-day{display:flex;flex-direction:column;gap:1px}.meal-day strong{font-size:12px}.meal-day small{color:#9eab9c;font-size:9px}
+.meal-plan-row div:nth-child(3) strong{font-weight:700}.meal-plan-row div:nth-child(3) small{display:block;margin-top:3px;color:#8da18a}
+.meal-actual button{background:#eaf5d8;border:0;border-radius:6px;padding:6px 4px;color:#527c3b;font-size:9px;font-weight:800;width:100%}.meal-actual span{color:#bdc7ba}
+.progress-view .log-panel{margin-bottom:12px;padding:15px 18px}.progress-view .log-panel .panel-heading{margin-bottom:8px}
+.progress-view .form-row{gap:7px}.progress-view .form-row input{padding:8px;margin-top:4px}.progress-view .form-row .save-button{padding:10px 11px}
+.progress-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.progress-columns .timeline{margin:0;padding:14px}
+.progress-columns .panel-heading{margin-bottom:8px}.progress-columns .panel-heading span:last-child{display:none}
+.progress-columns .history-row{grid-template-columns:67px 56px 1fr;gap:4px;min-height:48px;font-size:10px}
+.progress-columns .history-actions{flex-wrap:wrap;gap:3px}.progress-columns .history-actions button{font-size:9px;padding:3px 5px}
+.progress-columns .week-row{grid-template-columns:22px 69px 1fr;min-height:35px;gap:4px;font-size:10px}
+.progress-columns .week-count{font-size:9px;white-space:normal}.progress-columns .week-measure{display:none}
+@media(max-width:850px){.calendar-layout{grid-template-columns:1fr}.progress-columns{grid-template-columns:1fr}.meal-plan-head,.meal-plan-row{grid-template-columns:55px 1fr 1.1fr 62px}}
+@media(max-width:690px){.today-view .charts-row{grid-template-columns:1fr}.heatmap-summary{display:none}.meal-plan-head,.meal-plan-row{grid-template-columns:48px 1fr 1.2fr}.meal-plan-head span:last-child,.meal-actual{display:none}}
