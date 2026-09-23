@@ -130,13 +130,29 @@ function WorkoutHeatmap({ state }: { state: Snapshot }) {
   }));
   const all = columns.flat();
   const count = (status: WorkoutStatus) => all.filter(day => day.status === status).length;
+  const monthName = (iso: string) => dateOf(iso).toLocaleDateString("en-KE", { month: "short" });
+  const monthLabels = columns.map((column, i) => {
+    const label = monthName(column[0].date);
+    const prev = i > 0 ? monthName(columns[i - 1][0].date) : "";
+    return label === prev ? "" : label;
+  });
+  const dayLabels = ["Mon", "", "Wed", "", "Fri", "", ""];
   return <div className="heatmap-card">
     <div className="heatmap-heading"><span>FULL CHALLENGE</span><small>{pretty(state.plan.startDate)} – {pretty(state.plan.endDate)}</small></div>
     <div className="heatmap-content">
-      <div className="heatmap-weeks" role="img" aria-label={"Workout calendar: " + count("completed") + " completed, " + count("skipped") + " skipped, " + count("missed") + " missed"}>
-        {columns.map((column, i) => <div className="heatmap-week" key={i}>{column.map(({ date, status }) => <span key={date} className={"heatmap-square " + status} title={pretty(date) + ": " + status} />)}</div>)}
+      <div className="heatmap-plot">
+        <div className="heatmap-months">{monthLabels.map((label, i) => <span className="heatmap-month" key={i}>{label}</span>)}</div>
+        <div className="heatmap-grid-row">
+          <div className="heatmap-days">{dayLabels.map((label, i) => <span key={i}>{label}</span>)}</div>
+          <div className="heatmap-weeks" role="img" aria-label={"Workout calendar: " + count("completed") + " completed, " + count("skipped") + " skipped, " + count("missed") + " missed"}>
+            {columns.map((column, i) => <div className="heatmap-week" key={i}>{column.map(({ date, status }) => <span key={date} className={"heatmap-square " + status} title={pretty(date) + ": " + status} />)}</div>)}
+          </div>
+        </div>
       </div>
-      <div className="heatmap-summary"><b>{count("completed")} done</b><span>{count("skipped")} skipped · {count("missed")} missed</span></div>
+      <div className="heatmap-side">
+        <div className="heatmap-summary"><b>{count("completed")} done</b><span>{count("skipped")} skipped · {count("missed")} missed</span></div>
+        <div className="heatmap-legend"><span className="legend-swatch completed" /><span>Done</span><span className="legend-swatch skipped" /><span>Skipped</span><span className="legend-swatch missed" /><span>Missed</span></div>
+      </div>
     </div>
   </div>;
 }
