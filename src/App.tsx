@@ -59,7 +59,7 @@ function workoutForDate(date: Date, plan: Plan) {
   const day = date.getDay();
   return { week, phase, label: day === 0 ? "Rest day" : [1, 3, 5].includes(day) ? "Full-body strength" : day === 6 && phase > 0 ? "Treadmill intervals" : "Incline treadmill" };
 }
-type WorkoutStatus = "completed" | "skipped" | "missed" | "untracked" | "pending" | "rest" | "future" | "outside";
+type WorkoutStatus = "completed" | "skipped" | "missed" | "untracked" | "pending" | "rest" | "future" | "outside" | "inactive";
 function workoutStatus(state: Snapshot, iso: string): WorkoutStatus {
   if (iso < state.plan.startDate || iso > state.plan.endDate) return "outside";
   if (dateOf(iso).getDay() === 0) return "rest";
@@ -122,32 +122,33 @@ function CircularProgress({ state }: { state: Snapshot }) {
 }
 
 function WorkoutHeatmap({ state }: { state: Snapshot }) {
-  const first = monday(dateOf(state.plan.startDate));
-  const weeks = Math.ceil(dayCount(isoOf(first), state.plan.endDate) / 7);
+  const year = dateOf(state.today).getFullYear();
+  const yearStart = new Date(year, 0, 1);
+  const yearEnd = new Date(year, 11, 31);
+  const first = monday(yearStart);
+  const weeks = Math.ceil((yearEnd.getTime() - first.getTime()) / 604800000) + 1;
   const columns = Array.from({ length: weeks }, (_, week) => Array.from({ length: 7 }, (_, day) => {
     const date = isoOf(addDays(first, week * 7 + day));
-    return { date, status: workoutStatus(state, date) };
+    const inYear = date.slice(0, 4) === String(year);
+    const status = inYear ? workoutStatus(state, date) : "outside";
+    return { date, status: status === "outside" && inYear ? "inactive" as WorkoutStatus : status as WorkoutStatus };
   }));
   const all = columns.flat();
   const count = (status: WorkoutStatus) => all.filter(day => day.status === status).length;
-  const monthName = (iso: string) => dateOf(iso).toLocaleDateString("en-KE", { month: "short" });
-  const monthLabels = columns.map((column, i) => {
-    const label = monthName(column[0].date);
-    const prev = i > 0 ? monthName(columns[i - 1][0].date) : "";
-    return label === prev ? "" : label;
-  });
+  const monthLabels = columns.map(() => "");
+  for (let month = 0; month < 12; month++) {
+    const monthMonday = monday(new Date(year, month, 1));
+    const column = Math.floor((monthMonday.getTime() - first.getTime()) / 604800000);
+    monthLabels[column] = new Date(year, month, 1).toLocaleDateString("en-KE", { month: "short" });
+  }
   const dayLabels = ["Mon", "", "Wed", "", "Fri", "", ""];
   return <div className="heatmap-card">
-    <div className="heatmap-heading"><span>FULL CHALLENGE</span><small>{pretty(state.plan.startDate)} – {pretty(state.plan.endDate)}</small></div>
+    <div className="heatmap-heading"><span>YEAR AT A GLANCE</span><small>{year}</small></div>
     <div className="heatmap-content">
-      <div className="heatmap-plot">
-        <div className="heatmap-months">{monthLabels.map((label, i) => <span className="heatmap-month" key={i}>{label}</span>)}</div>
-        <div className="heatmap-grid-row">
-          <div className="heatmap-days">{dayLabels.map((label, i) => <span key={i}>{label}</span>)}</div>
-          <div className="heatmap-weeks" role="img" aria-label={"Workout calendar: " + count("completed") + " completed, " + count("skipped") + " skipped, " + count("missed") + " missed"}>
-            {columns.map((column, i) => <div className="heatmap-week" key={i}>{column.map(({ date, status }) => <span key={date} className={"heatmap-square " + status} title={pretty(date) + ": " + status} />)}</div>)}
-          </div>
-        </div>
+      <div className="heatmap-grid" style={{ gridTemplateColumns: `24px repeat(${weeks}, minmax(0, 1fr))` }} role="img" aria-label={year + " workout calendar: " + count("completed") + " completed, " + count("skipped") + " skipped, " + count("missed") + " missed"}>
+        {monthLabels.map((label, i) => label && <span className="heatmap-month" key={"month-" + i} style={{ gridColumn: i + 2, gridRow: 1 }}>{label}</span>)}
+        {dayLabels.map((label, i) => label && <span className="heatmap-day-label" key={"day-" + i} style={{ gridColumn: 1, gridRow: i + 2 }}>{label}</span>)}
+        {columns.map((column, week) => column.map(({ date, status }, day) => <span key={date} className={"heatmap-square " + status} style={{ gridColumn: week + 2, gridRow: day + 2 }} title={pretty(date) + ": " + status} />))}
       </div>
       <div className="heatmap-side">
         <div className="heatmap-summary"><b>{count("completed")} done</b><span>{count("skipped")} skipped · {count("missed")} missed</span></div>

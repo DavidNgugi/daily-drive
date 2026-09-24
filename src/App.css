@@ -111,6 +111,7 @@
 .heatmap-week{display:flex;flex-direction:column;gap:3px}
 .heatmap-square{display:block;width:12px;height:12px;border-radius:2px;background:#e5eee0}
 .heatmap-square.completed{background:#91c943}.heatmap-square.skipped{background:#e8b26b}.heatmap-square.missed{background:#d99383}
+.heatmap-square.inactive{background:#e5eee0}
 .heatmap-square.pending{background:#c7daa9}.heatmap-square.rest{background:#dfe6db}.heatmap-square.untracked{background:#ecefea}
 .heatmap-square.outside{background:transparent}.heatmap-square.future{background:#e5eee0}
 .heatmap-side{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:0;padding-bottom:1px}
@@ -120,6 +121,16 @@
 .legend-swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-left:8px}
 .legend-swatch:first-child{margin-left:0}
 .legend-swatch.completed{background:#91c943}.legend-swatch.skipped{background:#e8b26b}.legend-swatch.missed{background:#d99383}
+.heatmap-content{display:flex;flex-direction:column;align-items:stretch;gap:10px}
+.heatmap-grid{display:grid;width:100%;min-width:0;grid-template-rows:16px repeat(7,auto);column-gap:5px;row-gap:5px;align-items:start;margin-top:2px}
+.heatmap-month{width:auto;margin:0;font-size:10px;line-height:16px;white-space:nowrap;overflow:visible}
+.heatmap-day-label{align-self:center;font-size:9px;line-height:1;color:#9aaa96;white-space:nowrap}
+.heatmap-square{width:100%;height:auto;aspect-ratio:1;border-radius:3px}
+.heatmap-side{display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:0}
+.heatmap-summary{text-align:left}
+@media(max-width:690px){.heatmap-side{align-items:flex-start;flex-wrap:wrap}.heatmap-legend{flex-wrap:wrap}}
+.topbar{position:sticky;top:0;z-index:15}
+.sidebar{position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;align-self:flex-start}
 .today-view .intro{margin-bottom:10px}
 .today-view .hero-card{padding:15px 20px}
 .today-view .hero-title{margin-top:5px;font-size:23px}
@@ -166,4 +177,4 @@
 .progress-columns .week-row{grid-template-columns:22px 69px 1fr;min-height:35px;gap:4px;font-size:10px}
 .progress-columns .week-count{font-size:9px;white-space:normal}.progress-columns .week-measure{display:none}
 @media(max-width:850px){.calendar-layout{grid-template-columns:1fr}.progress-columns{grid-template-columns:1fr}.meal-plan-head,.meal-plan-row{grid-template-columns:55px 1fr 1.1fr 62px}}
-@media(max-width:690px){.today-view .charts-row{grid-template-columns:1fr}.heatmap-side{display:none}.meal-plan-head,.meal-plan-row{grid-template-columns:48px 1fr 1.2fr}.meal-plan-head span:last-child,.meal-actual{display:none}}
+@media(max-width:690px){.today-view .charts-row{grid-template-columns:1fr}.meal-plan-head,.meal-plan-row{grid-template-columns:48px 1fr 1.2fr}.meal-plan-head span:last-child,.meal-actual{display:none}}
