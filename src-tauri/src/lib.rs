@@ -586,8 +586,14 @@ pub fn run() {
             let show_item = MenuItem::with_id(app, "open", "Open Daily Drive", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().expect("default app icon").clone())
+            let tray_builder = TrayIconBuilder::new();
+            #[cfg(target_os = "macos")]
+            let tray_builder = tray_builder
+                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?)
+                .icon_as_template(true);
+            #[cfg(not(target_os = "macos"))]
+            let tray_builder = tray_builder.icon(app.default_window_icon().expect("default app icon").clone());
+            let _tray = tray_builder
                 .menu(&menu)
                 .tooltip("Daily Drive")
                 .on_menu_event(|app, event| match event.id.as_ref() {
