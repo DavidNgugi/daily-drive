@@ -44,13 +44,38 @@ const itemsForWorkout = (workout: Pick<PlannedWorkout, "title" | "items" | "deta
   if (/(treadmill|steady cardio|brisk walk)/i.test(workout.title) && workout.details.trim()) return [{ name: workout.title, reps: workout.details.trim() }];
   return parts;
 };
+function BrandMark() {
+  return <svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 2.3 20.5 5.5v5.8c0 5.2-3.4 8.7-8.5 10.7-5.1-2-8.5-5.5-8.5-10.7V5.5L12 2.3Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+    <path d="m12 6.5 5.1 5.3h-3v4.8h-4.2v-4.8h-3L12 6.5Z" fill="currentColor" />
+  </svg>;
+}
 function WorkoutExerciseRows({ items, onChange, idPrefix }: { items: WorkoutItem[]; onChange: (items: WorkoutItem[]) => void; idPrefix: string }) {
   const [dragging, setDragging] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{ index: number; edge: "before" | "after" } | null>(null);
   const move = (from: number, to: number) => { if (to < 0 || to >= items.length || from === to) return; const next = [...items]; const [item] = next.splice(from, 1); next.splice(to, 0, item); onChange(next); };
+  const updateDropTarget = (clientX: number, clientY: number) => {
+    const element = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(".exercise-row[data-exercise-index]");
+    if (!element) { setDropTarget(null); return; }
+    const index = Number(element.dataset.exerciseIndex);
+    const rect = element.getBoundingClientRect();
+    setDropTarget({ index, edge: clientY < rect.top + rect.height / 2 ? "before" : "after" });
+  };
+  const finishDrag = () => {
+    if (dragging !== null && dropTarget) {
+      const target = dropTarget.index + (dropTarget.edge === "after" ? 1 : 0);
+      const next = [...items];
+      const [moved] = next.splice(dragging, 1);
+      const destination = Math.max(0, Math.min(next.length, target - (dragging < target ? 1 : 0)));
+      next.splice(destination, 0, moved);
+      onChange(next);
+    }
+    setDragging(null);
+    setDropTarget(null);
+  };
   return <div className="exercise-editor" aria-label="Workout exercises">
-    {items.map((item, index) => <div className={`exercise-row${dragging === index ? " dragging" : ""}${dropTarget?.index === index ? ` drop-${dropTarget.edge}` : ""}`} key={`${idPrefix}-${index}`} onDragOver={e => { e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setDropTarget({ index, edge: e.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(current => current?.index === index ? null : current); }} onDrop={e => { e.preventDefault(); if (dragging !== null) { const insertAfter = dropTarget?.index === index && dropTarget.edge === "after"; const target = index + (insertAfter ? 1 : 0); const next = [...items]; const [moved] = next.splice(dragging, 1); const destination = Math.max(0, Math.min(next.length, target - (dragging < target ? 1 : 0))); next.splice(destination, 0, moved); onChange(next); } setDragging(null); setDropTarget(null); }}>
-      <button type="button" className="drag-handle" draggable aria-label={`Reorder ${item.name || `exercise ${index + 1}`}`} title="Drag to reorder" onDragStart={e => { setDragging(index); setDropTarget(null); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(index)); }} onDragEnd={() => { setDragging(null); setDropTarget(null); }}>⠿</button>
+    {items.map((item, index) => <div className={`exercise-row${dragging === index ? " dragging" : ""}${dropTarget?.index === index ? ` drop-${dropTarget.edge}` : ""}`} data-exercise-index={index} key={`${idPrefix}-${index}`}>
+      <button type="button" className="drag-handle" aria-label={`Reorder ${item.name || `exercise ${index + 1}`}`} title="Drag to reorder" onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); setDragging(index); setDropTarget(null); }} onPointerMove={e => { if (dragging !== null) updateDropTarget(e.clientX, e.clientY); }} onPointerUp={finishDrag} onPointerCancel={() => { setDragging(null); setDropTarget(null); }}>⠿</button>
       <label className="exercise-name"><span className="visually-hidden">Exercise {index + 1}</span><input list={`${idPrefix}-suggestions`} value={item.name} maxLength={100} placeholder="Search or add an exercise" onChange={e => onChange(items.map((current, i) => i === index ? { ...current, name: e.target.value } : current))} /></label>
       <label className="exercise-reps"><span className="visually-hidden">Sets, reps, or duration</span><input value={item.reps} maxLength={60} placeholder="3 × 10" onChange={e => onChange(items.map((current, i) => i === index ? { ...current, reps: e.target.value } : current))} /></label>
       <div className="exercise-row-actions"><button type="button" aria-label="Move exercise up" disabled={index === 0} onClick={() => move(index, index - 1)}>↑</button><button type="button" aria-label="Move exercise down" disabled={index === items.length - 1} onClick={() => move(index, index + 1)}>↓</button><button type="button" className="exercise-delete" aria-label={`Delete ${item.name || `exercise ${index + 1}`}`} onClick={() => onChange(items.filter((_, i) => i !== index))}>×</button></div>
@@ -126,9 +151,9 @@ function WeightChart({ state, onLog }: { state: Snapshot; onLog: () => void }) {
   return <div className="chart-card">
     <div className="chart-heading"><span>WEIGHT TREND</span><strong>{currentWeight(state)} <small>kg</small></strong></div>
     <svg className="chart-svg" viewBox="0 0 280 70" preserveAspectRatio="none" role="img" aria-label={points.length > 1 ? "Weight trend from " + state.plan.startWeight + " to " + currentWeight(state) + " kilograms" : "No weight check-in yet"}>
-      <line x1="10" y1={y(state.plan.targetWeight)} x2="270" y2={y(state.plan.targetWeight)} stroke="#c7d6b5" strokeDasharray="4 4" />
-      {points.length > 1 && <polyline points={line} fill="none" stroke="#446f3d" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
-      <circle cx={x(last[0])} cy={y(last[1])} r="4.5" fill="#93cb41" stroke="#fff" strokeWidth="2" />
+      <line x1="10" y1={y(state.plan.targetWeight)} x2="270" y2={y(state.plan.targetWeight)} stroke="#c7c7c7" strokeDasharray="4 4" />
+      {points.length > 1 && <polyline points={line} fill="none" stroke="#444" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
+      <circle cx={x(last[0])} cy={y(last[1])} r="4.5" fill="#777" stroke="#fff" strokeWidth="2" />
     </svg>
     <div className="chart-foot"><span>Goal {state.plan.targetWeight} kg{points.length > 1 ? " · " + pretty(last[0]) : " · No weigh-ins yet"}</span><button onClick={onLog}>Log weight →</button></div>
   </div>;
@@ -145,8 +170,8 @@ function CircularProgress({ state }: { state: Snapshot }) {
     <div className="chart-heading"><span>CHALLENGE PROGRESS</span><span>WORKOUTS</span></div>
     <div className="donut-body">
       <svg viewBox="0 0 80 80" role="img" aria-label={percent + " percent of scheduled workouts completed"}>
-        <circle cx="40" cy="40" r={radius} fill="none" stroke="#dbe7cf" strokeWidth="8" />
-        <circle cx="40" cy="40" r={radius} fill="none" stroke="#91c943" strokeWidth="8" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} transform="rotate(-90 40 40)" />
+        <circle cx="40" cy="40" r={radius} fill="none" stroke="#ddd" strokeWidth="8" />
+        <circle cx="40" cy="40" r={radius} fill="none" stroke="#218344" strokeWidth="8" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} transform="rotate(-90 40 40)" />
         <text x="40" y="44" textAnchor="middle" className="donut-percent">{percent}%</text>
       </svg>
       <div><strong>{completed} of {scheduled.length}</strong><span>planned sessions done</span><small>{Object.keys(state.skipped).filter(date => scheduled.includes(date)).length} skipped · {scheduled.filter(date => workoutStatus(state, date) === "missed").length} missed</small></div>
@@ -242,7 +267,7 @@ function SetupWizard({ initialPlan, onFinish, saving, error }: { initialPlan: Pl
   }
   return <div className="setup-shell">
     <div className="setup-orbit orbit-one" /><div className="setup-orbit orbit-two" />
-    <header className="setup-brand"><div className="brand"><div className="brand-mark">D</div><span>DAILY DRIVE</span></div><span>YOUR PLAN, YOUR PACE</span></header>
+    <header className="setup-brand"><div className="brand"><BrandMark /><span>DAILY DRIVE</span></div><span>YOUR PLAN, YOUR PACE</span></header>
     <section className="setup-card" aria-live="polite">
       <div className="setup-progress"><div className="setup-step-label"><span>LET'S SET YOU UP</span><b>{String(step + 1).padStart(2, "0")} <i>/</i> {String(steps.length).padStart(2, "0")}</b></div><div className="setup-progress-track"><span style={{ width: `${(step + 1) / steps.length * 100}%` }} /></div><div className="setup-step-names">{steps.map((name, i) => <span className={i === step ? "current" : i < step ? "passed" : ""} key={name}>{name}</span>)}</div></div>
       <div className="setup-content" key={step}>
@@ -279,8 +304,11 @@ function SetupWizard({ initialPlan, onFinish, saving, error }: { initialPlan: Pl
 }
 
 function App() {
-  const [theme, setTheme] = useState<"dark" | "system">(() => {
-    try { return localStorage.getItem("daily-drive-theme") === "dark" ? "dark" : "system"; }
+  const [theme, setTheme] = useState<"light" | "dark" | "system">(() => {
+    try {
+      const savedTheme = localStorage.getItem("daily-drive-theme");
+      return savedTheme === "light" || savedTheme === "dark" ? savedTheme : "system";
+    }
     catch { return "system"; }
   });
   const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
@@ -367,6 +395,7 @@ function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark-theme", theme === "dark" || (theme === "system" && systemDark));
+    document.documentElement.classList.toggle("light-theme", theme === "light");
   }, [theme, systemDark]);
 
   useEffect(() => {
@@ -543,7 +572,7 @@ function App() {
     <div className={state?.alarmActive ? "app alarm-on" : "app"}>
       {toast && <div key={toast.id} className={`toast-notice ${toast.kind}`} role={toast.kind === "error" ? "alert" : "status"} aria-live={toast.kind === "error" ? "assertive" : "polite"}><span className="toast-mark">{toast.kind === "success" ? "✓" : "!"}</span><span>{toast.message}</span><button onClick={() => setToast(null)} aria-label="Dismiss notification">×</button></div>}
       <header className="topbar">
-        <div className="brand"><div className="brand-mark">D</div><span>DAILY DRIVE</span></div>
+        <div className="brand"><BrandMark /><span>DAILY DRIVE</span></div>
         <div className="top-right"><span className="anniversary">GOAL · {state ? pretty(state.plan.endDate).toUpperCase() : "NOV 28"}</span><span className="date-pill">{state ? today.toLocaleDateString("en-KE", { weekday: "short", month: "short", day: "numeric" }) : "Loading…"}</span></div>
       </header>
       <div className="shell">
@@ -555,7 +584,7 @@ function App() {
           <button className={tab === "meals" ? "nav active" : "nav"} onClick={() => setTab("meals")}><span>♢</span> Meal plan</button>
           <button className={tab === "progress" ? "nav active" : "nav"} onClick={() => setTab("progress")}><span>▥</span> Progress</button>
           <button className={tab === "settings" ? "nav active" : "nav"} onClick={() => setTab("settings")}><span>⚙</span> Settings</button>
-          <div className="side-bottom"><div className="mini-label">THE GOAL</div><div className="goal-numbers">{state?.plan.startWeight ?? 99} <span>→</span> {state?.plan.targetWeight ?? 90} <small>kg</small></div><p>{totalWeeks} weeks, one day at a time.</p></div>
+          <div className="side-bottom"><div className="mini-label">THE GOAL</div><div className="goal-numbers"><b className="goal-current">{state ? currentWeight(state) : 99}</b> <span>→</span> <b className="goal-target">{state?.plan.targetWeight ?? 90}</b> <small>kg</small></div><p>{totalWeeks} weeks, one day at a time.</p></div>
         </aside>
         <main className={`content ${tab}-view`}>
           {!state ? <div className="loading">Loading your plan…</div> : <>
@@ -707,7 +736,7 @@ function App() {
               <h2 className="settings-subhead">Your profile</h2>
               <section className="panel settings-panel"><div className="setting-row"><div><h3>Display name</h3><p>This is how Daily Drive addresses you in the app.</p></div><div className="profile-name-control"><input value={profileName} maxLength={80} aria-label="Display name" onChange={e => setProfileName(e.target.value)} placeholder="Your name" /><button className="save-button" disabled={busy || !profileName.trim() || profileName.trim() === (state.profile?.name ?? "")} onClick={() => act<Snapshot>("save_profile", { name: profileName }, s => { setState(s); setProfileName(s.profile?.name ?? ""); })}>Save name</button></div></div></section>
               <h2 className="settings-subhead">Appearance</h2>
-              <section className="panel settings-panel"><div className="setting-row"><div><h3>Theme</h3><p>Choose a dark appearance or follow your device’s system setting.</p></div><select className="theme-select" value={theme} onChange={e => { setTheme(e.target.value as "dark" | "system"); notify("success", "Appearance updated"); }} aria-label="Theme"><option value="dark">Dark</option><option value="system">System</option></select></div></section>
+              <section className="panel settings-panel"><div className="setting-row"><div><h3>Theme</h3><p>Choose light, dark, or follow your device’s system setting.</p></div><select className="theme-select" value={theme} onChange={e => { setTheme(e.target.value as "light" | "dark" | "system"); notify("success", "Appearance updated"); }} aria-label="Theme"><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select></div></section>
               <h2 className="settings-subhead">Your data</h2>
               <section className="panel settings-panel"><div className="setting-row"><div><h3>Export or import</h3><p>Export your plan and history. Imports keep all dates; imported entries replace matches.</p>{exportStage && <p className="export-status" role="status" aria-live="polite"><span className="export-spinner" />{exportStage}</p>}{exportMessage && <div className="export-status success" role="status" aria-live="polite"><span>{exportMessage}</span>{exportPath && <><small className="export-path">{exportPath}</small><button className="show-export" onClick={() => void showExportInFinder(exportPath)}>Show in folder</button></>}</div>}</div><div className="data-actions"><button className="data-button secondary" disabled={busy || exporting} onClick={exportData}>{exporting ? "Exporting…" : "Export data"}</button><button className="data-button" disabled={busy || exporting} onClick={() => importFileRef.current?.click()}>Import data</button><input ref={importFileRef} className="visually-hidden" type="file" accept=".json,application/json" aria-label="Choose Daily Drive export file" onChange={e => void importData(e.target.files?.[0])} /></div></div></section>
               <h2 className="settings-subhead">Daily alarm</h2>
