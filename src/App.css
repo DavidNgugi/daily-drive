@@ -23,6 +23,7 @@
 .today-view .meal-note{padding:10px}
 .today-view .alarm-banner{margin-bottom:12px;padding:10px 14px}
 .snooze-button{margin-left:8px;border:1px solid #d68f79;border-radius:8px;background:#fff8f4;color:#873923;padding:7px 11px;font-size:11px;font-weight:800;white-space:nowrap}.snooze-button:disabled{opacity:.55;cursor:default}
+.sound-control{display:flex;align-items:center;gap:8px}.sound-control select{border:1px solid #dfe6da;border-radius:9px;padding:10px 12px;color:#24432f;background:#fff;min-width:125px}.sound-control button{background:#254832;color:#fff;border:0;border-radius:9px;padding:11px 14px;font-size:12px;font-weight:800;white-space:nowrap}.sound-control button:disabled{opacity:.45;cursor:default}
 @media(max-width:850px){.today-view{padding:20px 24px}.today-view .two-col{grid-template-columns:1.16fr 1fr}}
 @media(max-width:690px){.today-view{padding:18px}.today-view .hero-card{display:block}.today-view .hero-title{margin-top:12px}.today-view .complete-button{margin-top:14px}.today-view .two-col{grid-template-columns:1fr}}
 
@@ -177,5 +178,59 @@
 .progress-columns .history-actions{flex-wrap:wrap;gap:3px}.progress-columns .history-actions button{font-size:9px;padding:3px 5px}
 .progress-columns .week-row{grid-template-columns:22px 69px 1fr;min-height:35px;gap:4px;font-size:10px}
 .progress-columns .week-count{font-size:9px;white-space:normal}.progress-columns .week-measure{display:none}
+
+/* Persistent dark appearance */
+.theme-select{border:1px solid #dfe6da;border-radius:9px;padding:10px 32px 10px 12px;color:#24432f;background:#fff;font:700 12px "DM Sans",sans-serif}
+.dark-theme{color-scheme:dark;background:#111713;color:#e4ebe2}
+.dark-theme body{background:#111713;color:#e4ebe2}
+.dark-theme .topbar{background:#171f19;border-color:#2b382d}
+.dark-theme .sidebar{background:#151c16;border-color:#2b382d}
+.dark-theme .date-pill{border-color:#354336;color:#c5d2c3}
+.dark-theme h1,.dark-theme .settings-subhead{color:#e3ebdf}
+.dark-theme .intro,.dark-theme .setting-row p{color:#9ba99b}
+.dark-theme .nav{color:#a9b7a7}
+.dark-theme .nav:hover{background:#202b20}
+.dark-theme .nav.active{background:#2b3d25;color:#d7f3a1}
+.dark-theme .side-bottom{border-color:#2b382d}
+.dark-theme .side-bottom p,.dark-theme .date-pill{color:#aab7a8}
+.dark-theme .panel,.dark-theme .heatmap-card,.dark-theme .meal-modal{background:#1a221b;border-color:#2d392e;color:#dce5da}
+.dark-theme .chart-card{background:#202b20;border-color:#344333}
+.dark-theme .chart-heading strong,.dark-theme .donut-body strong,.dark-theme .donut-percent{color:#d8e8d0}
+.dark-theme .chart-foot,.dark-theme .donut-body span,.dark-theme .donut-body small,.dark-theme .heatmap-summary span,.dark-theme .heatmap-legend,.dark-theme .heatmap-heading small{color:#a1b09e}
+.dark-theme .panel-heading,.dark-theme .heatmap-heading{color:#9fbd89}
+.dark-theme .exercise,.dark-theme .meal,.dark-theme .steps p,.dark-theme .week-row,.dark-theme .setting-row,.dark-theme .history-row,.dark-theme .meal-plan-head,.dark-theme .meal-plan-row{border-color:#2a352b}
+.dark-theme .exercise strong,.dark-theme .meal small,.dark-theme .steps .muted,.dark-theme .panel-copy,.dark-theme .week-count,.dark-theme .week-measure,.dark-theme .settings-note,.dark-theme .form-row label{color:#9eac9d}
+.dark-theme .meal-note,.dark-theme .today-view .log-food-button,.dark-theme .meal-plan-row.current{background:#263321;color:#bed2a8}
+.dark-theme .calendar-toolbar button,.dark-theme .meal-week-toolbar button,.dark-theme .history-actions button,.dark-theme .inline-editor input,.dark-theme .form-row input,.dark-theme .plan-form input,.dark-theme .meal-fields input,.dark-theme .time-control input,.dark-theme .sound-control select,.dark-theme .theme-select{background:#202a21;border-color:#3a493a;color:#d8e3d5}
+.dark-theme .calendar-cell{background:#202920;border-color:#344034;color:#d2dfcf}
+.dark-theme .calendar-cell.outside,.dark-theme .calendar-cell.rest,.dark-theme .calendar-cell.untracked{background:#1b231c;color:#98a795}
+.dark-theme .calendar-cell.completed{background:#334927;border-color:#55773d}.dark-theme .calendar-cell.skipped{background:#443522;border-color:#745a35}.dark-theme .calendar-cell.missed{background:#452c28;border-color:#75433a}
+.dark-theme .calendar-detail h2,.dark-theme .calendar-toolbar strong,.dark-theme .meal-week-toolbar strong{color:#d8e5d5}
+.dark-theme .calendar-copy,.dark-theme .detail-block,.dark-theme .detail-block strong,.dark-theme .meal-plan-row div:nth-child(3) small{color:#a7b4a3}
+.dark-theme .heatmap-square.completed{background:#91c943}.dark-theme .heatmap-square.skipped{background:#b8884c}.dark-theme .heatmap-square.missed{background:#b86e60}.dark-theme .heatmap-square.inactive,.dark-theme .heatmap-square.future{background:#303b30}.dark-theme .heatmap-square.rest{background:#3a4439}.dark-theme .heatmap-square.untracked{background:#252e26}
+.dark-theme .heatmap-legend .legend-swatch{opacity:.9}
+.dark-theme .bar{background:#394638}.dark-theme .bar-rest,.dark-theme .bar-outside,.dark-theme .bar-future{background:#303b30}
+.dark-theme .chart-svg circle{stroke:#202b20}
+.dark-theme .form-row input,.dark-theme .plan-form input,.dark-theme .meal-fields input{color:#d8e3d5}
+.dark-theme .theme-select{min-width:120px}
+.dark-theme .inline-editor{background:#2b281e;border-color:#51452c}.dark-theme .meal-plan-row.current{color:#d8e3d5}
+.dark-theme .heatmap-day-label,.dark-theme .heatmap-month,.dark-theme .calendar-weekday{color:#9aa997}
+.dark-theme .alarm-banner{background:#422820;color:#f3b39e;border-color:#704337}
+.dark-theme .snooze-button{background:#35221d;color:#f0b8a6;border-color:#805542}
+
+/* Match the alarm sound picker to its adjacent actions. */
+.sound-control select,.sound-control button{height:42px;box-sizing:border-box;font:700 13px "DM Sans",system-ui,sans-serif;border-radius:10px}
+.sound-control select{min-width:170px;padding:0 34px 0 13px;line-height:1.2}
+.sound-control button{padding:0 18px}
+.theme-select{height:42px;min-width:120px;box-sizing:border-box;padding:0 32px 0 13px;font:700 13px "DM Sans",system-ui,sans-serif;border-radius:10px}
+.data-actions{display:flex;align-items:center;gap:9px}
+.data-button{height:42px;border:0;border-radius:10px;background:#254832;color:#fff;padding:0 16px;font:700 13px "DM Sans",system-ui,sans-serif;white-space:nowrap}
+.data-button.secondary{background:#edf3e5;color:#4e6e46}
+.data-button:disabled{opacity:.5;cursor:default}
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.dark-theme .data-button.secondary{background:#293729;color:#c1d3ba}
+.dark-theme .sound-control select{background:#202a21;border-color:#3a493a;color:#d8e3d5}
+@media(max-width:690px){.setting-row{align-items:flex-start;flex-direction:column}.data-actions{width:100%}.data-button{flex:1}.sound-control{flex-wrap:wrap}}
 @media(max-width:850px){.calendar-layout{grid-template-columns:1fr}.progress-columns{grid-template-columns:1fr}.meal-plan-head,.meal-plan-row{grid-template-columns:55px 1fr 1.1fr 62px}}
 @media(max-width:690px){.today-view .charts-row{grid-template-columns:1fr}.meal-plan-head,.meal-plan-row{grid-template-columns:48px 1fr 1.2fr}.meal-plan-head span:last-child,.meal-actual{display:none}}
+.version-panel{margin-bottom:26px}.version-panel .setting-row{border:0}.version-number{font:600 12px "DM Sans",sans-serif;color:#7c8b7f;letter-spacing:0;margin-left:8px}.release-status{margin-top:7px!important;color:#52733c!important}

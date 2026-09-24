@@ -32,6 +32,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk4N0FBMkU5MTYzNkMxRjQKUldUMHdUWVc2YUo2bUgwaFY5eUJFTjJvQ0kvZitRdWxLZ0RILzdybmI4REZZUFF6ek9zL05UMDkK",
+      "endpoints": [
+        "https://github.com/DavidNgugi/daily-drive/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

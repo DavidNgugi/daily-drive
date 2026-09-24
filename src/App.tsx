@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import "./App.css";
 
@@ -8,7 +11,7 @@ type Measurement = { weight: number | null; waist: number | null };
 type Plan = { startDate: string; endDate: string; startWeight: number; targetWeight: number };
 type MealLog = { breakfast: string; lunch: string; dinner: string; snacks: string };
 type Snapshot = {
-  today: string; alarmTime: string; trackingSince: string; completed: string[]; measurements: Record<string, Measurement>;
+  today: string; alarmTime: string; alarmSound: string; trackingSince: string; completed: string[]; measurements: Record<string, Measurement>;
   skipped: Record<string, string>; meals: Record<string, MealLog>; plan: Plan;
   alarmActive: boolean; inPlan: boolean; restDay: boolean;
 };
@@ -160,9 +163,15 @@ function WorkoutHeatmap({ state }: { state: Snapshot }) {
 }
 
 function App() {
+  const [theme, setTheme] = useState<"dark" | "system">(() => {
+    try { return localStorage.getItem("daily-drive-theme") === "dark" ? "dark" : "system"; }
+    catch { return "system"; }
+  });
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
   const [state, setState] = useState<Snapshot | null>(null);
   const [tab, setTab] = useState<"today" | "calendar" | "meals" | "progress" | "settings">("today");
   const [alarmInput, setAlarmInput] = useState("07:00");
+  const [alarmSoundInput, setAlarmSoundInput] = useState("Sosumi");
   const [login, setLogin] = useState(false);
   const [weight, setWeight] = useState("");
   const [waist, setWaist] = useState("");
@@ -177,11 +186,51 @@ function App() {
   const [selectedDate, setSelectedDate] = useState("2026-09-24");
   const [mealWeekOffset, setMealWeekOffset] = useState(0);
   const [error, setError] = useState("");
+  const [appVersion, setAppVersion] = useState("0.1.0");
+  const [releaseStatus, setReleaseStatus] = useState("");
+  const [checkingRelease, setCheckingRelease] = useState(false);
   const [busy, setBusy] = useState(false);
   const notificationSentFor = useRef("");
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    invoke<Snapshot>("get_state").then(s => { setState(s); setAlarmInput(s.alarmTime); setPlanInput(s.plan); setMealDate(s.today); setMeasurementDate(s.today); setSelectedDate(s.today); setCalendarMonth(s.today.slice(0, 7)); }).catch(e => setError(String(e)));
+    getVersion().then(setAppVersion).catch(() => {});
+    try { localStorage.setItem("daily-drive-theme", theme); } catch { /* Keep the current session usable if storage is unavailable. */ }
+  }, [theme]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemDark(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  async function checkForUpdates() {
+    setCheckingRelease(true);
+    setReleaseStatus("");
+    try {
+      const update = await check();
+      if (!update) setReleaseStatus(`You're up to date · v${appVersion}`);
+      else {
+        setReleaseStatus(`Downloading version ${update.version}…`);
+        await update.downloadAndInstall();
+        setReleaseStatus("Update installed. Restarting Daily Drive…");
+        await relaunch();
+      }
+    } catch (e) {
+      setReleaseStatus(e instanceof Error ? e.message : "Could not check for updates. Try again later.");
+    } finally {
+      setCheckingRelease(false);
+    }
+  }
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark-theme", theme === "dark" || (theme === "system" && systemDark));
+  }, [theme, systemDark]);
+
+  useEffect(() => {
+    invoke<Snapshot>("get_state").then(s => { setState(s); setAlarmInput(s.alarmTime); setAlarmSoundInput(s.alarmSound); setPlanInput(s.plan); setMealDate(s.today); setMeasurementDate(s.today); setSelectedDate(s.today); setCalendarMonth(s.today.slice(0, 7)); }).catch(e => setError(String(e)));
     invoke<boolean>("login_enabled").then(setLogin).catch(() => {});
     let stop: (() => void) | undefined;
     listen<Snapshot>("state-changed", e => setState(e.payload)).then(fn => { stop = fn; });
@@ -219,12 +268,45 @@ function App() {
   useEffect(() => { setWeight(logged?.weight?.toString() ?? ""); setWaist(logged?.waist?.toString() ?? ""); }, [logged?.weight, logged?.waist]);
   useEffect(() => { if (state && !mealEditor) setMealInput(state.meals[mealDate || state.today] ?? emptyMeals()); }, [state?.today, state?.meals, mealDate, mealEditor]);
   useEffect(() => { if (state) setPlanInput(state.plan); }, [state?.plan]);
+  useEffect(() => { if (state) setAlarmSoundInput(state.alarmSound); }, [state?.alarmSound]);
 
   async function act<T>(command: string, args?: Record<string, unknown>, after?: (value: T) => void) {
     setBusy(true); setError("");
     try { const value = await invoke<T>(command, args); after?.(value); }
     catch (e) { setError(String(e)); }
     finally { setBusy(false); }
+  }
+
+  async function exportData() {
+    setError("");
+    try {
+      const contents = await invoke<string>("export_data");
+      const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `daily-drive-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) { setError(String(e)); }
+  }
+
+  async function importData(file?: File) {
+    if (!file) return;
+    setBusy(true); setError("");
+    try {
+      const contents = await file.text();
+      const imported = await invoke<Snapshot>("import_data", { contents });
+      setState(imported);
+      setAlarmInput(imported.alarmTime);
+      setAlarmSoundInput(imported.alarmSound);
+      setPlanInput(imported.plan);
+      setMeasurementDate(imported.today);
+      setMealDate(imported.today);
+    } catch (e) { setError(String(e)); }
+    finally {
+      setBusy(false);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
   }
 
   const dates = Array.from({ length: totalWeeks }, (_, i) => addDays(start, i * 7));
@@ -384,11 +466,18 @@ function App() {
                 </div>
                 <button className="save-button" disabled={busy} onClick={() => act<Snapshot>("save_plan", { plan: planInput }, s => { setState(s); setMeasurementDate(s.today < s.plan.startDate ? s.plan.startDate : s.today > s.plan.endDate ? s.plan.endDate : s.today); })}>Save plan</button>
               </section>}
+              <h2 className="settings-subhead">Appearance</h2>
+              <section className="panel settings-panel"><div className="setting-row"><div><h3>Theme</h3><p>Choose a dark appearance or follow your Mac’s system setting.</p></div><select className="theme-select" value={theme} onChange={e => setTheme(e.target.value as "dark" | "system")} aria-label="Theme"><option value="dark">Dark</option><option value="system">System</option></select></div></section>
+              <h2 className="settings-subhead">Your data</h2>
+              <section className="panel settings-panel"><div className="setting-row"><div><h3>Export or import</h3><p>Export your plan and history. Imports keep all dates; imported entries replace matches.</p></div><div className="data-actions"><button className="data-button secondary" disabled={busy} onClick={exportData}>Export data</button><button className="data-button" disabled={busy} onClick={() => importFileRef.current?.click()}>Import data</button><input ref={importFileRef} className="visually-hidden" type="file" accept=".json,application/json" aria-label="Choose Daily Drive export file" onChange={e => void importData(e.target.files?.[0])} /></div></div></section>
               <h2 className="settings-subhead">Daily alarm</h2>
               <section className="panel settings-panel"><div className="setting-row"><div><h3>Workout time</h3><p>Monday–Saturday, within your challenge dates.</p></div><div className="time-control"><input type="time" value={alarmInput} onChange={e => setAlarmInput(e.target.value)} aria-label="Workout alarm time" /><button disabled={busy || alarmInput === state.alarmTime} onClick={() => act<Snapshot>("set_alarm_time", { time: alarmInput }, setState)}>Save</button></div></div>
+                <div className="setting-row"><div><h3>Alarm sound</h3><p>Choose and preview the sound you hear when the alarm rings.</p></div><div className="sound-control"><select value={alarmSoundInput} onChange={e => setAlarmSoundInput(e.target.value)} aria-label="Alarm sound">{["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"].map(sound => <option key={sound} value={sound}>{sound}</option>)}</select><button disabled={busy} onClick={() => act<void>("preview_alarm_sound", { sound: alarmSoundInput })}>Preview</button><button disabled={busy || alarmSoundInput === state.alarmSound} onClick={() => act<Snapshot>("set_alarm_sound", { sound: alarmSoundInput }, setState)}>Save</button></div></div>
                 <div className="setting-row"><div><h3>Launch at login</h3><p>Keep the app ready for your daily alarm.</p></div><button className={login ? "toggle on" : "toggle"} role="switch" aria-checked={login} aria-label="Launch at login" onClick={() => act<boolean>("launch_at_login", { enabled: !login }, setLogin)}><span /></button></div>
               </section>
               <p className="settings-note">The Mac must be awake and this app must be running. Closing the window keeps it running; use Quit to stop it. The sound follows your Mac's volume.</p>
+              <h2 className="settings-subhead">App updates</h2>
+              <section className="panel settings-panel version-panel"><div className="setting-row"><div><h3>Daily Drive <span className="version-number">v{appVersion}</span></h3><p>Check for and install signed updates from GitHub.</p>{releaseStatus && <p className="release-status" role="status">{releaseStatus}</p>}</div><button className="save-button" disabled={checkingRelease} onClick={() => void checkForUpdates()}>{checkingRelease ? "Checking…" : "Check for updates"}</button></div></section>
             </>}
           </>}
         </main>

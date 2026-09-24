@@ -36,6 +36,7 @@ struct MealLog { breakfast: String, lunch: String, dinner: String, snacks: Strin
 #[serde(default, rename_all = "camelCase")]
 struct SavedData {
     alarm_time: String,
+    alarm_sound: String,
     tracking_since: String,
     completed: Vec<String>,
     skipped: BTreeMap<String, String>,
@@ -44,10 +45,14 @@ struct SavedData {
     plan: PlanConfig,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportFile { format: String, version: u8, data: SavedData }
+
 impl Default for SavedData {
     fn default() -> Self {
         Self {
-            alarm_time: "07:00".into(), tracking_since: Local::now().date_naive().to_string(),
+            alarm_time: "07:00".into(), alarm_sound: "Sosumi".into(), tracking_since: Local::now().date_naive().to_string(),
             completed: vec![], skipped: BTreeMap::new(),
             measurements: BTreeMap::new(), meals: BTreeMap::new(), plan: PlanConfig::default(),
         }
@@ -59,7 +64,7 @@ struct AppState { data: Mutex<SavedData>, path: PathBuf, alarm_active: Mutex<boo
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Snapshot {
-    today: String, alarm_time: String, tracking_since: String, completed: Vec<String>,
+    today: String, alarm_time: String, alarm_sound: String, tracking_since: String, completed: Vec<String>,
     skipped: BTreeMap<String, String>, measurements: BTreeMap<String, Measurement>,
     meals: BTreeMap<String, MealLog>, plan: PlanConfig, alarm_active: bool,
     in_plan: bool, rest_day: bool,
@@ -77,7 +82,7 @@ fn snapshot(state: &AppState) -> Snapshot {
     let date = Local::now().date_naive();
     let data = state.data.lock().unwrap().clone();
     Snapshot {
-        today: date.to_string(), alarm_time: data.alarm_time, tracking_since: data.tracking_since,
+        today: date.to_string(), alarm_time: data.alarm_time, alarm_sound: data.alarm_sound, tracking_since: data.tracking_since,
         completed: data.completed, skipped: data.skipped, measurements: data.measurements,
         meals: data.meals, plan: data.plan.clone(),
         alarm_active: *state.alarm_active.lock().unwrap(),
@@ -96,6 +101,54 @@ fn save(state: &AppState, data: &SavedData) -> Result<(), String> {
 fn get_state(state: tauri::State<AppState>) -> Snapshot { snapshot(&state) }
 
 #[tauri::command]
+fn export_data(state: tauri::State<AppState>) -> Result<String, String> {
+    let data = state.data.lock().map_err(|e| e.to_string())?;
+    serde_json::to_string_pretty(&serde_json::json!({ "format": "daily-drive", "version": 1, "data": &*data }))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: String) -> Result<Snapshot, String> {
+    let imported: ImportFile = serde_json::from_str(&contents).map_err(|_| "This file is not a valid Daily Drive export.".to_string())?;
+    if imported.format != "daily-drive" || imported.version != 1 { return Err("This Daily Drive export version is not supported.".into()); }
+    let start = NaiveDate::parse_from_str(&imported.data.plan.start_date, "%Y-%m-%d").map_err(|_| "The export contains an invalid plan date.")?;
+    let end = NaiveDate::parse_from_str(&imported.data.plan.end_date, "%Y-%m-%d").map_err(|_| "The export contains an invalid plan date.")?;
+    if end < start || (end - start).num_days() > 365 || !(30.0..=300.0).contains(&imported.data.plan.start_weight) || !(30.0..=300.0).contains(&imported.data.plan.target_weight) {
+        return Err("The export contains an invalid challenge plan.".into());
+    }
+    alarm_sound_path(&imported.data.alarm_sound)?;
+    let time = &imported.data.alarm_time;
+    if time.len() != 5 || time.as_bytes().get(2) != Some(&b':') || !time[..2].parse::<u8>().is_ok_and(|h| h < 24) || !time[3..].parse::<u8>().is_ok_and(|m| m < 60) {
+        return Err("The export contains an invalid alarm time.".into());
+    }
+    for date in imported.data.completed.iter().chain(imported.data.skipped.keys()).chain(imported.data.measurements.keys()).chain(imported.data.meals.keys()) {
+        NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| "The export contains an invalid history date.")?;
+    }
+
+    let mut current = state.data.lock().map_err(|e| e.to_string())?;
+    let mut merged = current.clone();
+    merged.alarm_time = imported.data.alarm_time;
+    merged.alarm_sound = imported.data.alarm_sound;
+    merged.tracking_since = merged.tracking_since.min(imported.data.tracking_since);
+    merged.completed.extend(imported.data.completed);
+    merged.completed.sort();
+    merged.completed.dedup();
+    merged.skipped.extend(imported.data.skipped);
+    merged.measurements.extend(imported.data.measurements);
+    merged.meals.extend(imported.data.meals);
+    merged.plan = imported.data.plan;
+
+    let backup = state.path.with_file_name(format!("progress.backup-import-{}.json", Local::now().format("%Y%m%d-%H%M%S-%3f")));
+    if state.path.exists() { fs::copy(&state.path, backup).map_err(|e| format!("Could not back up current history: {e}"))?; }
+    save(&state, &merged)?;
+    *current = merged;
+    drop(current);
+    let result = snapshot(&state);
+    let _ = app.emit("state-changed", &result);
+    Ok(result)
+}
+
+#[tauri::command]
 fn set_alarm_time(app: tauri::AppHandle, state: tauri::State<AppState>, time: String) -> Result<Snapshot, String> {
     let valid = time.len() == 5 && time.as_bytes()[2] == b':' &&
         time[..2].parse::<u8>().is_ok_and(|h| h < 24) &&
@@ -108,6 +161,31 @@ fn set_alarm_time(app: tauri::AppHandle, state: tauri::State<AppState>, time: St
     let result = snapshot(&state);
     let _ = app.emit("state-changed", &result);
     Ok(result)
+}
+
+const ALARM_SOUNDS: &[&str] = &["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"];
+
+fn alarm_sound_path(sound: &str) -> Result<String, String> {
+    if !ALARM_SOUNDS.contains(&sound) { return Err("Choose an available alarm sound.".into()); }
+    Ok(format!("/System/Library/Sounds/{sound}.aiff"))
+}
+
+#[tauri::command]
+fn set_alarm_sound(app: tauri::AppHandle, state: tauri::State<AppState>, sound: String) -> Result<Snapshot, String> {
+    alarm_sound_path(&sound)?;
+    let mut data = state.data.lock().unwrap();
+    data.alarm_sound = sound;
+    save(&state, &data)?;
+    drop(data);
+    let result = snapshot(&state);
+    let _ = app.emit("state-changed", &result);
+    Ok(result)
+}
+
+#[tauri::command]
+fn preview_alarm_sound(sound: String) -> Result<(), String> {
+    let path = alarm_sound_path(&sound)?;
+    Command::new("afplay").arg(path).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -264,7 +342,10 @@ fn start_alarm_loop(app: tauri::AppHandle) {
                     last_focus = Instant::now();
                 }
                 if last_sound.elapsed() >= Duration::from_secs(4) {
-                    thread::spawn(|| { let _ = Command::new("afplay").arg("/System/Library/Sounds/Sosumi.aiff").status(); });
+                    let sound = state.data.lock().unwrap().alarm_sound.clone();
+                    if let Ok(path) = alarm_sound_path(&sound) {
+                        thread::spawn(move || { let _ = Command::new("afplay").arg(path).status(); });
+                    }
                     last_sound = Instant::now();
                 }
             }
@@ -286,6 +367,8 @@ pub fn run() {
     }));
     builder
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .setup(|app| {
             let path = app.path().app_data_dir()?.join("progress.json");
@@ -310,7 +393,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_alarm_time, complete_today, snooze_alarm, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
+        .invoke_handler(tauri::generate_handler![get_state, export_data, import_data, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
         .build(tauri::generate_context!())
         .expect("error while building daily-drive")
         .run(|app, event| {
