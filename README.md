@@ -50,6 +50,4 @@ git tag v0.1.1
 git push origin main --tags
 ```
 
-The updater private key and password are stored as GitHub Actions secrets. The updater public key is embedded in the app configuration. Keep a secure backup of the private key and password: future app updates depend on them.
-
-For a smooth macOS install without Gatekeeper warnings, configure Apple Developer ID signing and notarization secrets in the repository. The release workflow already reads `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`; until these are configured, it uses ad-hoc signing and releases are not notarized.
+See [docs/releases.md](docs/releases.md) for the one-time GitHub and Apple setup, credential sources, and the release checklist.

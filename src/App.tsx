@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import "./App.css";
 
@@ -189,6 +190,10 @@ function App() {
   const [appVersion, setAppVersion] = useState("0.1.0");
   const [releaseStatus, setReleaseStatus] = useState("");
   const [checkingRelease, setCheckingRelease] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportStage, setExportStage] = useState("");
+  const [exportMessage, setExportMessage] = useState("");
+  const [exportPath, setExportPath] = useState("");
   const [busy, setBusy] = useState(false);
   const notificationSentFor = useRef("");
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -279,15 +284,46 @@ function App() {
 
   async function exportData() {
     setError("");
+    setExportMessage("");
+    setExportPath("");
+    setExporting(true);
+    setExportStage("Choose a save location…");
     try {
+      const path = await save({
+        defaultPath: `daily-drive-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: "Daily Drive backup", extensions: ["json"] }],
+      });
+      if (!path) return;
+      setExportStage("Saving your backup…");
       const contents = await invoke<string>("export_data");
-      const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `daily-drive-${new Date().toISOString().slice(0, 10)}.json`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await invoke("write_export_file", { path, contents });
+      setExportPath(path);
+      setExportMessage("Export complete. Opening the saved file in Finder…");
+      try {
+        await invoke("reveal_export_file", { path });
+        setExportMessage("Export complete. The saved file is selected in Finder.");
+      } catch (e) {
+        console.warn("Export saved but Finder could not reveal it", e);
+        setExportMessage(`Export saved, but Finder could not open it: ${String(e)}`);
+      }
+      try {
+        let permitted = await isPermissionGranted();
+        if (!permitted) permitted = (await requestPermission()) === "granted";
+        if (permitted) sendNotification({ title: "Daily Drive backup saved", body: path.split(/[\\/]/).pop() ?? path });
+      } catch (e) { console.warn("Could not send export notification", e); }
     } catch (e) { setError(String(e)); }
+    finally {
+      setExporting(false);
+      setExportStage("");
+    }
+  }
+
+  async function showExportInFinder(path: string) {
+    try { await invoke("reveal_export_file", { path }); }
+    catch (e) {
+      console.warn("Could not open exported file in Finder", e);
+      setExportMessage(`Export saved, but Finder could not open it: ${String(e)}`);
+    }
   }
 
   async function importData(file?: File) {
@@ -469,7 +505,7 @@ function App() {
               <h2 className="settings-subhead">Appearance</h2>
               <section className="panel settings-panel"><div className="setting-row"><div><h3>Theme</h3><p>Choose a dark appearance or follow your Mac’s system setting.</p></div><select className="theme-select" value={theme} onChange={e => setTheme(e.target.value as "dark" | "system")} aria-label="Theme"><option value="dark">Dark</option><option value="system">System</option></select></div></section>
               <h2 className="settings-subhead">Your data</h2>
-              <section className="panel settings-panel"><div className="setting-row"><div><h3>Export or import</h3><p>Export your plan and history. Imports keep all dates; imported entries replace matches.</p></div><div className="data-actions"><button className="data-button secondary" disabled={busy} onClick={exportData}>Export data</button><button className="data-button" disabled={busy} onClick={() => importFileRef.current?.click()}>Import data</button><input ref={importFileRef} className="visually-hidden" type="file" accept=".json,application/json" aria-label="Choose Daily Drive export file" onChange={e => void importData(e.target.files?.[0])} /></div></div></section>
+              <section className="panel settings-panel"><div className="setting-row"><div><h3>Export or import</h3><p>Export your plan and history. Imports keep all dates; imported entries replace matches.</p>{exportStage && <p className="export-status" role="status" aria-live="polite"><span className="export-spinner" />{exportStage}</p>}{exportMessage && <div className="export-status success" role="status" aria-live="polite"><span>{exportMessage}</span>{exportPath && <><small className="export-path">{exportPath}</small><button className="show-export" onClick={() => void showExportInFinder(exportPath)}>Show in Finder</button></>}</div>}</div><div className="data-actions"><button className="data-button secondary" disabled={busy || exporting} onClick={exportData}>{exporting ? "Exporting…" : "Export data"}</button><button className="data-button" disabled={busy || exporting} onClick={() => importFileRef.current?.click()}>Import data</button><input ref={importFileRef} className="visually-hidden" type="file" accept=".json,application/json" aria-label="Choose Daily Drive export file" onChange={e => void importData(e.target.files?.[0])} /></div></div></section>
               <h2 className="settings-subhead">Daily alarm</h2>
               <section className="panel settings-panel"><div className="setting-row"><div><h3>Workout time</h3><p>Monday–Saturday, within your challenge dates.</p></div><div className="time-control"><input type="time" value={alarmInput} onChange={e => setAlarmInput(e.target.value)} aria-label="Workout alarm time" /><button disabled={busy || alarmInput === state.alarmTime} onClick={() => act<Snapshot>("set_alarm_time", { time: alarmInput }, setState)}>Save</button></div></div>
                 <div className="setting-row"><div><h3>Alarm sound</h3><p>Choose and preview the sound you hear when the alarm rings.</p></div><div className="sound-control"><select value={alarmSoundInput} onChange={e => setAlarmSoundInput(e.target.value)} aria-label="Alarm sound">{["Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink"].map(sound => <option key={sound} value={sound}>{sound}</option>)}</select><button disabled={busy} onClick={() => act<void>("preview_alarm_sound", { sound: alarmSoundInput })}>Preview</button><button disabled={busy || alarmSoundInput === state.alarmSound} onClick={() => act<Snapshot>("set_alarm_sound", { sound: alarmSoundInput }, setState)}>Save</button></div></div>

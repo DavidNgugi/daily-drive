@@ -108,6 +108,19 @@ fn export_data(state: tauri::State<AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn write_export_file(path: String, contents: String) -> Result<(), String> {
+    fs::write(path, contents).map_err(|e| format!("Could not save the export: {e}"))
+}
+
+#[tauri::command]
+fn reveal_export_file(path: String) -> Result<(), String> {
+    let path = fs::canonicalize(path).map_err(|e| format!("Could not find the exported file: {e}"))?;
+    if !path.is_file() { return Err("The export path is not a file.".into()); }
+    let status = Command::new("open").arg("-R").arg(&path).status().map_err(|e| format!("Could not open Finder: {e}"))?;
+    if status.success() { Ok(()) } else { Err(format!("Finder exited with {status}.")) }
+}
+
+#[tauri::command]
 fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: String) -> Result<Snapshot, String> {
     let imported: ImportFile = serde_json::from_str(&contents).map_err(|_| "This file is not a valid Daily Drive export.".to_string())?;
     if imported.format != "daily-drive" || imported.version != 1 { return Err("This Daily Drive export version is not supported.".into()); }
@@ -367,6 +380,7 @@ pub fn run() {
     }));
     builder
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
@@ -393,7 +407,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, export_data, import_data, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
+        .invoke_handler(tauri::generate_handler![get_state, export_data, write_export_file, reveal_export_file, import_data, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
         .build(tauri::generate_context!())
         .expect("error while building daily-drive")
         .run(|app, event| {
