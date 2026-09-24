@@ -205,8 +205,10 @@
 .dark-theme .side-bottom{border-color:#2b382d}
 .dark-theme .side-bottom p,.dark-theme .date-pill{color:#aab7a8}
 .dark-theme .panel,.dark-theme .heatmap-card,.dark-theme .meal-modal{background:#1a221b;border-color:#2d392e;color:#dce5da}
+.dark-theme .meal-modal .modal-heading h2{color:#e2ebdf}
 .dark-theme .chart-card{background:#202b20;border-color:#344333}
-.dark-theme .chart-heading strong,.dark-theme .donut-body strong,.dark-theme .donut-percent{color:#d8e8d0}
+.dark-theme .chart-heading strong,.dark-theme .donut-body strong{color:#d8e8d0}
+.dark-theme .donut-percent{fill:#d8e8d0}
 .dark-theme .chart-foot,.dark-theme .donut-body span,.dark-theme .donut-body small,.dark-theme .heatmap-summary span,.dark-theme .heatmap-legend,.dark-theme .heatmap-heading small{color:#a1b09e}
 .dark-theme .panel-heading,.dark-theme .heatmap-heading{color:#9fbd89}
 .dark-theme .exercise,.dark-theme .meal,.dark-theme .steps p,.dark-theme .week-row,.dark-theme .setting-row,.dark-theme .history-row,.dark-theme .meal-plan-head,.dark-theme .meal-plan-row{border-color:#2a352b}
