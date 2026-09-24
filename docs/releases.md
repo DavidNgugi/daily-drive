@@ -2,7 +2,7 @@
 
 ## What is already configured
 
-- Pushing a matching `v*` tag starts a macOS release build. You can also start one from **GitHub → Actions → Desktop release → Run workflow**.
+- Pushing a matching `v*` tag starts macOS, Windows, and Linux release builds. You can also start one from **GitHub → Actions → Desktop release → Run workflow**.
 - The workflow caches Rust build output and npm packages to shorten repeat builds.
 - Tauri signs in-app update bundles. The public key is embedded in `src-tauri/tauri.conf.json`; the private key and its password are GitHub Actions secrets.
 - Users can see the app version and check for and install updates from **Settings → App updates**. GitHub Releases hosts the installer and update metadata.
@@ -47,7 +47,7 @@ git tag v0.1.1
 git push origin main --tags
 ```
 
-The tag must match the version in `package.json`; the workflow checks this before building. The release action creates a GitHub release, uploads the macOS app and DMG, and publishes updater metadata. Once available, installed copies can update from **Settings → App updates**.
+The tag must match the version in `package.json`; the workflow checks this before building. The release action creates a GitHub release, uploads installers for macOS, Windows, and Linux, and publishes updater metadata. Once available, installed copies can update from **Settings → App updates**.
 
 ## If the updater signing key needs to be replaced
 

@@ -11,9 +11,24 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            bundles: app,dmg
+          - platform: windows-latest
+            bundles: msi,nsis
+          - platform: ubuntu-22.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -24,6 +39,7 @@ jobs:
           workspaces: ./src-tauri -> target
       - run: npm ci
       - name: Verify release tag
+        shell: bash
         if: github.ref_type == 'tag'
         run: |
           version=$(node -p "require('./package.json').version")
@@ -42,7 +58,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: Daily Drive v__VERSION__
-          releaseBody: Download the macOS installer below. Installed apps can update from Settings → App updates.
+          releaseBody: Download the installer for macOS, Windows, or Linux below. Installed apps can update from Settings → App updates.
           releaseDraft: false
           prerelease: false
-          args: --bundles app,dmg
+          args: --bundles ${{ matrix.bundles }}
