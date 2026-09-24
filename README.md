@@ -2,7 +2,7 @@
 
 A personal workout and meal planning companion for macOS, Windows, and Linux. Built with Tauri 2, Rust, React, and TypeScript.
 
-![Daily Drive app screenshot](assets/daily-drive-screenshot.jpg)
+![Daily Drive app screenshot](assets/daily-drive-screenshot.webp)
 
 ## What it does
 
