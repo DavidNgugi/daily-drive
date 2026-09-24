@@ -54,7 +54,7 @@ impl Default for SavedData {
     }
 }
 
-struct AppState { data: Mutex<SavedData>, path: PathBuf, alarm_active: Mutex<bool> }
+struct AppState { data: Mutex<SavedData>, path: PathBuf, alarm_active: Mutex<bool>, snooze_until: Mutex<Option<Instant>> }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +116,17 @@ fn complete_today(app: tauri::AppHandle, state: tauri::State<AppState>) -> Resul
 }
 
 #[tauri::command]
+fn snooze_alarm(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<Snapshot, String> {
+    if !*state.alarm_active.lock().unwrap() { return Err("The alarm is not active.".into()); }
+    *state.snooze_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(10 * 60));
+    *state.alarm_active.lock().unwrap() = false;
+    if let Some(window) = app.get_webview_window("main") { let _ = window.set_always_on_top(false); }
+    let result = snapshot(&state);
+    let _ = app.emit("state-changed", &result);
+    Ok(result)
+}
+
+#[tauri::command]
 fn set_workout_status(app: tauri::AppHandle, state: tauri::State<AppState>, date: String, status: String, reason: Option<String>) -> Result<Snapshot, String> {
     let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|_| "Invalid date")?;
     let mut data = state.data.lock().unwrap();
@@ -139,6 +150,7 @@ fn set_workout_status(app: tauri::AppHandle, state: tauri::State<AppState>, date
     save(&state, &data)?;
     drop(data);
     *state.alarm_active.lock().unwrap() = false;
+    *state.snooze_until.lock().unwrap() = None;
     if let Some(window) = app.get_webview_window("main") { let _ = window.set_always_on_top(false); }
     let result = snapshot(&state);
     let _ = app.emit("state-changed", &result);
@@ -225,6 +237,10 @@ fn start_alarm_loop(app: tauri::AppHandle) {
                 workout_day(date, &data.plan) &&
                 now.format("%H:%M").to_string() >= data.alarm_time &&
                 !data.completed.contains(&today) && !data.skipped.contains_key(&today)
+            } && {
+                let mut snooze = state.snooze_until.lock().unwrap();
+                if snooze.is_some_and(|until| Instant::now() < until) { false }
+                else { *snooze = None; true }
             };
             let changed = {
                 let mut active = state.alarm_active.lock().unwrap();
@@ -259,13 +275,23 @@ fn start_alarm_loop(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .setup(|app| {
             let path = app.path().app_data_dir()?.join("progress.json");
             let login_marker = path.with_file_name("autostart-initialized");
             let data = fs::read(&path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
-            app.manage(AppState { data: Mutex::new(data), path, alarm_active: Mutex::new(false) });
+            app.manage(AppState { data: Mutex::new(data), path, alarm_active: Mutex::new(false), snooze_until: Mutex::new(None) });
             {
                 let state = app.state::<AppState>();
                 let data = state.data.lock().unwrap();
@@ -284,7 +310,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_alarm_time, complete_today, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
+        .invoke_handler(tauri::generate_handler![get_state, set_alarm_time, complete_today, snooze_alarm, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
         .build(tauri::generate_context!())
         .expect("error while building daily-drive")
         .run(|app, event| {

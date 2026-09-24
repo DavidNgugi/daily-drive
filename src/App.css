@@ -22,6 +22,7 @@
 .today-view .meal p{margin-top:4px}
 .today-view .meal-note{padding:10px}
 .today-view .alarm-banner{margin-bottom:12px;padding:10px 14px}
+.snooze-button{margin-left:8px;border:1px solid #d68f79;border-radius:8px;background:#fff8f4;color:#873923;padding:7px 11px;font-size:11px;font-weight:800;white-space:nowrap}.snooze-button:disabled{opacity:.55;cursor:default}
 @media(max-width:850px){.today-view{padding:20px 24px}.today-view .two-col{grid-template-columns:1.16fr 1fr}}
 @media(max-width:690px){.today-view{padding:18px}.today-view .hero-card{display:block}.today-view .hero-title{margin-top:12px}.today-view .complete-button{margin-top:14px}.today-view .two-col{grid-template-columns:1fr}}
 

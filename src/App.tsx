@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import "./App.css";
 
 type Measurement = { weight: number | null; waist: number | null };
@@ -177,6 +178,7 @@ function App() {
   const [mealWeekOffset, setMealWeekOffset] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const notificationSentFor = useRef("");
 
   useEffect(() => {
     invoke<Snapshot>("get_state").then(s => { setState(s); setAlarmInput(s.alarmTime); setPlanInput(s.plan); setMealDate(s.today); setMeasurementDate(s.today); setSelectedDate(s.today); setCalendarMonth(s.today.slice(0, 7)); }).catch(e => setError(String(e)));
@@ -185,6 +187,20 @@ function App() {
     listen<Snapshot>("state-changed", e => setState(e.payload)).then(fn => { stop = fn; });
     return () => stop?.();
   }, []);
+
+  useEffect(() => {
+    if (!state?.alarmActive || notificationSentFor.current === state.today) return;
+    notificationSentFor.current = state.today;
+    let cancelled = false;
+    void (async () => {
+      try {
+        let permitted = await isPermissionGranted();
+        if (!permitted) permitted = (await requestPermission()) === "granted";
+        if (permitted && !cancelled) sendNotification({ title: "Daily Drive", body: "Workout time. Your daily session is ready." });
+      } catch (e) { console.warn("Could not send alarm notification", e); }
+    })();
+    return () => { cancelled = true; };
+  }, [state?.alarmActive]);
 
   const today = state ? dateOf(state.today) : new Date();
   const day = today.getDay();
@@ -244,7 +260,7 @@ function App() {
         </aside>
         <main className={`content ${tab}-view`}>
           {!state ? <div className="loading">Loading your plan…</div> : <>
-            {state.alarmActive && <div className="alarm-banner"><span className="alarm-dot" /> IT'S WORKOUT TIME <span className="alarm-sub">The alarm keeps sounding until you complete today's session.</span></div>}
+            {state.alarmActive && <div className="alarm-banner"><span className="alarm-dot" /> IT'S WORKOUT TIME <span className="alarm-sub">The alarm keeps sounding until you complete today's session.</span><button className="snooze-button" disabled={busy} onClick={() => act<Snapshot>("snooze_alarm", {}, setState)}>Snooze 10 min</button></div>}
             {error && <div className="error" role="alert">{error}</div>}
             {tab === "today" && <>
               <div className="eyebrow">WEEK {week} OF {totalWeeks} <span>·</span> {phase.toUpperCase()}</div>
