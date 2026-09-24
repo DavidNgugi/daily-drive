@@ -2,6 +2,8 @@
 
 A simple Mac workout companion. Built with Tauri 2, Rust, React, and TypeScript.
 
+![Daily Drive app screenshot](assets/daily-drive-screenshot.jpg)
+
 ## What it does
 
 - Shows the day's strength, treadmill, or rest plan and the matching meals.
