@@ -34,11 +34,13 @@ struct MealLog { breakfast: String, lunch: String, dinner: String, snacks: Strin
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct WorkoutItem { name: String, reps: String }
+struct WorkoutItem { name: String, reps: String, #[serde(default)] duration_seconds: u32, #[serde(default)] rest_seconds: u32 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-struct PlannedWorkout { title: String, details: String, items: Vec<WorkoutItem>, rest_day: bool }
+struct PlannedWorkout { title: String, details: String, items: Vec<WorkoutItem>, rest_day: bool, #[serde(default = "default_session_minutes")] duration_minutes: u32 }
+
+fn default_session_minutes() -> u32 { 30 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -50,7 +52,7 @@ struct Schedule { workouts: Vec<PlannedWorkout>, meals: Vec<PlannedMeals>, worko
 
 impl Default for Schedule {
     fn default() -> Self {
-        let workout = |title: &str, details: &str, rest_day: bool| PlannedWorkout { title: title.into(), details: details.into(), items: Vec::new(), rest_day };
+        let workout = |title: &str, details: &str, rest_day: bool| PlannedWorkout { title: title.into(), details: details.into(), items: Vec::new(), rest_day, duration_minutes: default_session_minutes() };
         Self {
             workouts: vec![
                 workout("Rest & recharge", "Take the day off and recover.", true),
@@ -115,7 +117,7 @@ impl Default for SavedData {
     }
 }
 
-struct AppState { data: Mutex<SavedData>, path: PathBuf, alarm_active: Mutex<bool>, snooze_until: Mutex<Option<Instant>> }
+struct AppState { data: Mutex<SavedData>, path: PathBuf, alarm_active: Mutex<bool>, snooze_until: Mutex<Option<Instant>>, session_active: Mutex<bool> }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -171,7 +173,7 @@ fn validate_schedule(schedule: &Schedule) -> Result<(), String> {
     if schedule.workouts.len() != 7 || schedule.meals.len() != 7 {
         return Err("A weekly plan must include all seven days.".into());
     }
-    let valid_workout = |w: &PlannedWorkout| w.title.chars().count() <= 80 && w.details.chars().count() <= 500 && w.items.len() <= 60 && w.items.iter().all(|item| item.name.chars().count() <= 100 && item.reps.chars().count() <= 60) && (w.rest_day || !w.title.trim().is_empty());
+    let valid_workout = |w: &PlannedWorkout| w.title.chars().count() <= 80 && w.details.chars().count() <= 500 && w.duration_minutes <= 600 && w.items.len() <= 60 && w.items.iter().all(|item| item.name.chars().count() <= 100 && item.reps.chars().count() <= 60 && item.duration_seconds <= 21600 && item.rest_seconds <= 3600) && (w.rest_day || !w.title.trim().is_empty());
     let valid_meals = |m: &PlannedMeals| [&m.breakfast, &m.lunch, &m.dinner, &m.snacks].iter().all(|v| v.chars().count() <= 250);
     if schedule.workouts.iter().any(|w| !valid_workout(w)) || schedule.workout_overrides.values().any(|w| !valid_workout(w)) {
         return Err("Check workout names and exercise rows (names up to 100 characters, sets or reps up to 60).".into());
@@ -423,6 +425,18 @@ fn snooze_alarm(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<
 }
 
 #[tauri::command]
+fn set_session_active(app: tauri::AppHandle, state: tauri::State<AppState>, active: bool) -> Result<Snapshot, String> {
+    *state.session_active.lock().map_err(|e| e.to_string())? = active;
+    if active {
+        *state.alarm_active.lock().map_err(|e| e.to_string())? = false;
+        if let Some(window) = app.get_webview_window("main") { let _ = window.set_always_on_top(false); }
+    }
+    let result = snapshot(&state);
+    let _ = app.emit("state-changed", &result);
+    Ok(result)
+}
+
+#[tauri::command]
 fn set_workout_status(app: tauri::AppHandle, state: tauri::State<AppState>, date: String, status: String, reason: Option<String>) -> Result<Snapshot, String> {
     let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").map_err(|_| "Invalid date")?;
     let mut data = state.data.lock().unwrap();
@@ -528,7 +542,7 @@ fn start_alarm_loop(app: tauri::AppHandle) {
                 data.onboarding_complete.unwrap_or(true) && workout_day(date, &data.plan, &data.schedule) &&
                 now.format("%H:%M").to_string() >= data.alarm_time &&
                 !data.completed.contains(&today) && !data.skipped.contains_key(&today)
-            } && {
+            } && !*state.session_active.lock().unwrap() && {
                 let mut snooze = state.snooze_until.lock().unwrap();
                 if snooze.is_some_and(|until| Instant::now() < until) { false }
                 else { *snooze = None; true }
@@ -612,7 +626,7 @@ pub fn run() {
             let had_saved_data = path.exists();
             let mut data: SavedData = fs::read(&path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
             if data.onboarding_complete.is_none() { data.onboarding_complete = Some(had_saved_data); }
-            app.manage(AppState { data: Mutex::new(data), path, alarm_active: Mutex::new(false), snooze_until: Mutex::new(None) });
+            app.manage(AppState { data: Mutex::new(data), path, alarm_active: Mutex::new(false), snooze_until: Mutex::new(None), session_active: Mutex::new(false) });
             {
                 let state = app.state::<AppState>();
                 let data = state.data.lock().unwrap();
@@ -631,7 +645,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, export_data, write_export_file, reveal_export_file, import_data, finish_setup, save_schedule, save_actual_workout, save_profile, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
+        .invoke_handler(tauri::generate_handler![get_state, export_data, write_export_file, reveal_export_file, import_data, finish_setup, save_schedule, save_actual_workout, save_profile, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_session_active, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
         .build(tauri::generate_context!())
         .expect("error while building daily-drive")
         .run(|app, event| {
@@ -673,5 +687,13 @@ mod tests {
         assert!(workout_day(NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(), &plan, &schedule));
         assert!(!workout_day(NaiveDate::from_ymd_opt(2026, 9, 20).unwrap(), &plan, &schedule));
         assert!(workout_day(NaiveDate::from_ymd_opt(2026, 9, 26).unwrap(), &plan, &schedule));
+    }
+
+    #[test]
+    fn older_workout_plans_load_without_time_allocations() {
+        let workout: PlannedWorkout = serde_json::from_str(r#"{"title":"Strength","details":"","items":[{"name":"Squats","reps":"3 x 10"}],"restDay":false}"#).unwrap();
+        assert_eq!(workout.duration_minutes, 30);
+        assert_eq!(workout.items[0].duration_seconds, 0);
+        assert_eq!(workout.items[0].rest_seconds, 0);
     }
 }

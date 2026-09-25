@@ -6,13 +6,14 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import WorkoutSession, { type SessionDraft, createSessionDraft, loadSessionDraft } from "./WorkoutSession";
 import "./App.css";
 
 type Measurement = { weight: number | null; waist: number | null };
 type Plan = { startDate: string; endDate: string; startWeight: number; targetWeight: number };
 type MealLog = { breakfast: string; lunch: string; dinner: string; snacks: string };
-type WorkoutItem = { name: string; reps: string };
-type PlannedWorkout = { title: string; details: string; items?: WorkoutItem[]; restDay: boolean };
+type WorkoutItem = { name: string; reps: string; durationSeconds?: number; restSeconds?: number };
+type PlannedWorkout = { title: string; details: string; items?: WorkoutItem[]; restDay: boolean; durationMinutes?: number };
 type PlannedMeals = MealLog;
 type Schedule = { workouts: PlannedWorkout[]; meals: PlannedMeals[]; workoutOverrides: Record<string, PlannedWorkout>; mealOverrides: Record<string, PlannedMeals> };
 type UserProfile = { name: string; goal: string; preferences: string; equipment: string; availability: string };
@@ -50,7 +51,7 @@ function BrandMark() {
     <path d="m12 6.5 5.1 5.3h-3v4.8h-4.2v-4.8h-3L12 6.5Z" fill="currentColor" />
   </svg>;
 }
-function WorkoutExerciseRows({ items, onChange, idPrefix }: { items: WorkoutItem[]; onChange: (items: WorkoutItem[]) => void; idPrefix: string }) {
+function WorkoutExerciseRows({ items, onChange, idPrefix, timed = false }: { items: WorkoutItem[]; onChange: (items: WorkoutItem[]) => void; idPrefix: string; timed?: boolean }) {
   const [dragging, setDragging] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{ index: number; edge: "before" | "after" } | null>(null);
   const move = (from: number, to: number) => { if (to < 0 || to >= items.length || from === to) return; const next = [...items]; const [item] = next.splice(from, 1); next.splice(to, 0, item); onChange(next); };
@@ -74,10 +75,12 @@ function WorkoutExerciseRows({ items, onChange, idPrefix }: { items: WorkoutItem
     setDropTarget(null);
   };
   return <div className="exercise-editor" aria-label="Workout exercises">
-    {items.map((item, index) => <div className={`exercise-row${dragging === index ? " dragging" : ""}${dropTarget?.index === index ? ` drop-${dropTarget.edge}` : ""}`} data-exercise-index={index} key={`${idPrefix}-${index}`}>
+    {timed && <p className="exercise-timing-help">Add work and rest times in seconds. Leave work time empty to move on manually.</p>}
+    {items.map((item, index) => <div className={`exercise-row${timed ? " timed" : ""}${dragging === index ? " dragging" : ""}${dropTarget?.index === index ? ` drop-${dropTarget.edge}` : ""}`} data-exercise-index={index} key={`${idPrefix}-${index}`}>
       <button type="button" className="drag-handle" aria-label={`Reorder ${item.name || `exercise ${index + 1}`}`} title="Drag to reorder" onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); setDragging(index); setDropTarget(null); }} onPointerMove={e => { if (dragging !== null) updateDropTarget(e.clientX, e.clientY); }} onPointerUp={finishDrag} onPointerCancel={() => { setDragging(null); setDropTarget(null); }}>⠿</button>
       <label className="exercise-name"><span className="visually-hidden">Exercise {index + 1}</span><input list={`${idPrefix}-suggestions`} value={item.name} maxLength={100} placeholder="Search or add an exercise" onChange={e => onChange(items.map((current, i) => i === index ? { ...current, name: e.target.value } : current))} /></label>
       <label className="exercise-reps"><span className="visually-hidden">Sets, reps, or duration</span><input value={item.reps} maxLength={60} placeholder="3 × 10" onChange={e => onChange(items.map((current, i) => i === index ? { ...current, reps: e.target.value } : current))} /></label>
+      {timed && <><label className="exercise-time"><span className="visually-hidden">{item.name || `Exercise ${index + 1}`} duration in seconds</span><input type="number" min="0" max="21600" step="1" value={item.durationSeconds || ""} placeholder="Work sec" title="Exercise duration in seconds" onChange={e => onChange(items.map((current, i) => i === index ? { ...current, durationSeconds: Number(e.target.value) || 0 } : current))} /></label><label className="exercise-time"><span className="visually-hidden">Rest after {item.name || `exercise ${index + 1}`} in seconds</span><input type="number" min="0" max="3600" step="1" value={item.restSeconds || ""} placeholder="Rest sec" title="Rest after this exercise in seconds" disabled={index === items.length - 1} onChange={e => onChange(items.map((current, i) => i === index ? { ...current, restSeconds: Number(e.target.value) || 0 } : current))} /></label></>}
       <div className="exercise-row-actions"><button type="button" aria-label="Move exercise up" disabled={index === 0} onClick={() => move(index, index - 1)}>↑</button><button type="button" aria-label="Move exercise down" disabled={index === items.length - 1} onClick={() => move(index, index + 1)}>↓</button><button type="button" className="exercise-delete" aria-label={`Delete ${item.name || `exercise ${index + 1}`}`} onClick={() => onChange(items.filter((_, i) => i !== index))}>×</button></div>
     </div>)}
     <datalist id={`${idPrefix}-suggestions`}>{exerciseSuggestions.map(name => <option key={name} value={name} />)}</datalist>
@@ -86,7 +89,7 @@ function WorkoutExerciseRows({ items, onChange, idPrefix }: { items: WorkoutItem
 }
 function WorkoutItemList({ items, empty = "No exercises added yet." }: { items: WorkoutItem[]; empty?: string }) {
   if (!items.length) return <span className="workout-items-empty">{empty}</span>;
-  return <ul className="workout-item-list">{items.map((item, i) => <li key={`${item.name}-${i}`}><span>{item.name}</span>{item.reps && <small>{item.reps}</small>}</li>)}</ul>;
+  return <ul className="workout-item-list">{items.map((item, i) => <li key={`${item.name}-${i}`}><span>{item.name}</span><small>{[item.reps, item.durationSeconds ? `${item.durationSeconds}s work` : "", item.restSeconds && i < items.length - 1 ? `${item.restSeconds}s rest` : ""].filter(Boolean).join(" · ")}</small></li>)}</ul>;
 }
 const starterSchedule = (): Schedule => ({
   workouts: [
@@ -286,7 +289,7 @@ function SetupWizard({ initialPlan, onFinish, saving, error }: { initialPlan: Pl
         </>}
         {step === 3 && <>
           <div className="eyebrow">YOUR WEEKLY RHYTHM</div><h1>Shape your workouts.</h1><p className="intro">A suggested starting week, ready for you to change.</p>
-          <div className="setup-plan-list">{weekdayNames.map((name, i) => { const workout = schedule.workouts[i]; return <article className="setup-plan-row" key={name}><div className="setup-day-label"><span>{name.slice(0, 3).toUpperCase()}</span><small>{i === new Date().getDay() ? "TODAY" : ""}</small></div><div className="setup-plan-inputs"><input aria-label={`${name} workout name`} value={workout?.title ?? ""} disabled={workout?.restDay} onChange={e => changeWorkout(i, { title: e.target.value })} placeholder="Workout name" maxLength={80} /><label className="rest-toggle"><input type="checkbox" checked={workout?.restDay ?? false} onChange={e => changeWorkout(i, { restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || workout?.restDay ? [] : itemsForWorkout(workout ?? starterSchedule().workouts[i]), details: "" })} /><span>Rest</span></label>{!workout?.restDay && <details className="exercise-accordion" open={i === new Date().getDay()}><summary>Exercises · {itemsForWorkout(workout ?? starterSchedule().workouts[i]).length}</summary><WorkoutExerciseRows items={itemsForWorkout(workout ?? starterSchedule().workouts[i])} idPrefix={`setup-${i}`} onChange={items => changeWorkout(i, { items, details: "" })} /></details>}</div></article>; })}</div>
+          <div className="setup-plan-list">{weekdayNames.map((name, i) => { const workout = schedule.workouts[i]; return <article className="setup-plan-row" key={name}><div className="setup-day-label"><span>{name.slice(0, 3).toUpperCase()}</span><small>{i === new Date().getDay() ? "TODAY" : ""}</small></div><div className="setup-plan-inputs"><input aria-label={`${name} workout name`} value={workout?.title ?? ""} disabled={workout?.restDay} onChange={e => changeWorkout(i, { title: e.target.value })} placeholder="Workout name" maxLength={80} /><label className="rest-toggle"><input type="checkbox" checked={workout?.restDay ?? false} onChange={e => changeWorkout(i, { restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || workout?.restDay ? [] : itemsForWorkout(workout ?? starterSchedule().workouts[i]), details: "" })} /><span>Rest</span></label>{!workout?.restDay && <><label className="session-duration-field">Session target (min)<input type="number" min="1" max="600" step="1" value={workout.durationMinutes || 30} onChange={e => changeWorkout(i, { durationMinutes: Number(e.target.value) || 30 })} /></label><details className="exercise-accordion" open={i === new Date().getDay()}><summary>Exercises · {itemsForWorkout(workout ?? starterSchedule().workouts[i]).length}</summary><WorkoutExerciseRows timed items={itemsForWorkout(workout ?? starterSchedule().workouts[i])} idPrefix={`setup-${i}`} onChange={items => changeWorkout(i, { items, details: "" })} /></details></>}</div></article>; })}</div>
         </>}
         {step === 4 && <>
           <div className="eyebrow">A MENU THAT FEELS LIKE YOURS</div><h1>Plan your meals.</h1><p className="intro">Add the meals you want to plan. Leave anything open.</p>
@@ -327,6 +330,7 @@ function App() {
   const [workoutEditorDate, setWorkoutEditorDate] = useState("");
   const [workoutEditorInput, setWorkoutEditorInput] = useState<ActualWorkout>({ title: "", details: "", items: [] });
   const [workoutEditorOpen, setWorkoutEditorOpen] = useState(false);
+  const [sessionDraft, setSessionDraft] = useState<SessionDraft | null>(loadSessionDraft);
   const [mealInput, setMealInput] = useState<MealLog>(emptyMeals());
   const [mealEditor, setMealEditor] = useState(false);
   const [mealDate, setMealDate] = useState("");
@@ -399,7 +403,7 @@ function App() {
   }, [theme, systemDark]);
 
   useEffect(() => {
-    invoke<Snapshot>("get_state").then(s => { setState(s); setProfileName(s.profile?.name ?? ""); setAlarmInput(s.alarmTime); setAlarmSoundInput(alarmSoundChoices.includes(s.alarmSound) ? s.alarmSound : alarmSoundChoices[0]); setPlanInput(s.plan); setScheduleInput(s.schedule); setMealDate(s.today); setPlanDateInput(s.today); setMeasurementDate(s.today); setSelectedDate(s.today); setCalendarMonth(s.today.slice(0, 7)); }).catch(e => { setError(String(e)); notify("error", String(e)); });
+    invoke<Snapshot>("get_state").then(s => { setState(s); setProfileName(s.profile?.name ?? ""); setAlarmInput(s.alarmTime); setAlarmSoundInput(alarmSoundChoices.includes(s.alarmSound) ? s.alarmSound : alarmSoundChoices[0]); setPlanInput(s.plan); setScheduleInput(s.schedule); setMealDate(s.today); setPlanDateInput(s.today); setMeasurementDate(s.today); setSelectedDate(s.today); setCalendarMonth(s.today.slice(0, 7)); if (sessionDraft && !s.completed.includes(sessionDraft.date)) void invoke<Snapshot>("set_session_active", { active: true }).then(setState).catch(() => {}); else if (sessionDraft) { setSessionDraft(null); try { localStorage.removeItem("daily-drive-active-session"); } catch { /* Ignore unavailable storage. */ } } }).catch(e => { setError(String(e)); notify("error", String(e)); });
     invoke<boolean>("login_enabled").then(setLogin).catch(() => {});
     let stop: (() => void) | undefined;
     listen<Snapshot>("state-changed", e => setState(e.payload)).then(fn => { stop = fn; });
@@ -442,6 +446,22 @@ function App() {
     finally { setBusy(false); }
   }
 
+  async function startWorkoutSession() {
+    if (!state || !todayWorkout || todayWorkout.restDay) return;
+    setBusy(true); setError("");
+    try {
+      const updated = await invoke<Snapshot>("set_session_active", { active: true });
+      setState(updated);
+      setSessionDraft(createSessionDraft(state.today, todayWorkout, itemsForWorkout(todayWorkout)));
+    } catch (e) { const message = String(e); setError(message); notify("error", message); }
+    finally { setBusy(false); }
+  }
+
+  function closeWorkoutSession() {
+    setSessionDraft(null);
+    void invoke<Snapshot>("set_session_active", { active: false }).then(setState).catch(e => notify("error", String(e)));
+  }
+
   function updateWeeklyWorkout(index: number, update: Partial<PlannedWorkout>) {
     setScheduleInput(s => ({ ...s, workouts: s.workouts.map((w, i) => i === index ? { ...w, ...update } : w) }));
   }
@@ -452,7 +472,7 @@ function App() {
     if (!planDateInput) return;
     const workout = workoutForDate(dateOf(planDateInput), state!.plan, scheduleInput);
     const meals = mealsForDate(dateOf(planDateInput), scheduleInput);
-    const next: Schedule = { ...scheduleInput, workoutOverrides: { ...scheduleInput.workoutOverrides, [planDateInput]: { title: workout.title, details: workout.details, items: itemsForWorkout(workout), restDay: workout.restDay } }, mealOverrides: { ...scheduleInput.mealOverrides, [planDateInput]: meals } };
+    const next: Schedule = { ...scheduleInput, workoutOverrides: { ...scheduleInput.workoutOverrides, [planDateInput]: { title: workout.title, details: workout.details, items: itemsForWorkout(workout), restDay: workout.restDay, durationMinutes: workout.durationMinutes || 30 } }, mealOverrides: { ...scheduleInput.mealOverrides, [planDateInput]: meals } };
     act<Snapshot>("save_schedule", { schedule: next }, s => { setState(s); setScheduleInput(s.schedule); });
   }
   function clearDatePlan() {
@@ -552,6 +572,9 @@ function App() {
   const recentDays = Array.from({ length: Math.min(7, Math.max(0, dayCount(state?.plan.startDate ?? "2026-09-24", state?.today ?? "2026-09-24"))) }, (_, i) => addDays(today, -i));
   const actualMeals = state?.meals[state.today];
   const hasActualMeals = !!actualMeals && Object.values(actualMeals).some(Boolean);
+  const displayedMeals = (["breakfast", "lunch", "dinner", "snacks"] as const)
+    .map(field => ({ field, actual: actualMeals?.[field]?.trim(), planned: todayMeals[field]?.trim() }))
+    .filter(meal => meal.actual || meal.planned);
   const selected = dateOf(selectedDate);
   const selectedStatus = state ? workoutStatus(state, selectedDate) : "outside";
   const selectedWorkout = state ? workoutForDate(selected, state.plan, state.schedule) : null;
@@ -588,7 +611,7 @@ function App() {
         </aside>
         <main className={`content ${tab}-view`}>
           {!state ? <div className="loading">Loading your plan…</div> : <>
-            {state.alarmActive && <div className="alarm-banner"><span className="alarm-dot" /> IT'S WORKOUT TIME <span className="alarm-sub">The alarm keeps sounding until you complete today's session.</span><button className="snooze-button" disabled={busy} onClick={() => act<Snapshot>("snooze_alarm", {}, setState)}>Snooze 10 min</button></div>}
+            {state.alarmActive && <div className="alarm-banner"><span className="alarm-dot" /> IT'S WORKOUT TIME <span className="alarm-sub">Your session is ready.</span><button className="snooze-button" disabled={busy} onClick={() => void startWorkoutSession()}>Start session</button><button className="snooze-button" disabled={busy} onClick={() => act<Snapshot>("snooze_alarm", {}, setState)}>Snooze 10 min</button></div>}
             {tab === "today" && <>
               <div className="eyebrow">WEEK {week} OF {totalWeeks} <span>·</span> YOUR RHYTHM</div>
               <h1>{done ? "You showed up today." : skipped ? "Tomorrow is another chance." : state.restDay ? "Rest is part of the plan." : "Let's get moving."}</h1>
@@ -598,9 +621,10 @@ function App() {
               <div className="hero-card">
                 <div className="hero-top"><span className="section-kicker">TODAY'S WORKOUT</span><div className="hero-tools"><span className={done ? "status done" : "status"}>{done ? "✓ Completed" : skipped ? "↷ Skipped" : state.restDay ? "Rest day" : "● To do"}</span>{state.inPlan && <button className="hero-edit-plan" onClick={() => { setPlanDateInput(state.today); setPlanEditorSection("dates"); setTab("plan"); }}>Edit today’s plan</button>}</div></div>
                 <div className="hero-title">{todayWorkout?.label}</div>
-                <div className="hero-desc">{skipped && state.skipped[state.today] ? "Skipped: " + state.skipped[state.today] : todayWorkout?.restDay ? "A little recovery belongs in every plan." : `${itemsForWorkout(todayWorkout!).length} exercises planned · see your session below`}</div>
+                <div className="hero-desc">{skipped && state.skipped[state.today] ? "Skipped: " + state.skipped[state.today] : todayWorkout?.restDay ? "A little recovery belongs in every plan." : `${itemsForWorkout(todayWorkout!).length} exercises planned · ${todayWorkout?.durationMinutes || 30} min target · see your session below`}</div>
                 {state.inPlan && !state.restDay && <div className="hero-actions">
-                  <button className="complete-button" disabled={done || busy} onClick={() => act<Snapshot>("complete_today", {}, setState)}>{done ? "✓ Workout complete" : "✓ I completed this workout"}</button>
+                  <button className="complete-button" disabled={done || busy} onClick={() => void startWorkoutSession()}>{done ? "✓ Workout complete" : "▶ Start session"}</button>
+                  {!done && <button className="hero-mark-complete" disabled={busy} onClick={() => act<Snapshot>("complete_today", {}, setState)}>Mark complete</button>}
                   {!done && <button className="skip-button" disabled={busy} onClick={() => skipped ? act<Snapshot>("set_workout_status", { date: state.today, status: "clear", reason: null }, setState) : setSkipEditor(true)}>{skipped ? "Undo skip" : "Skip today"}</button>}
                 </div>}
               </div>
@@ -611,9 +635,8 @@ function App() {
                   {state.actualWorkouts[state.today] && <div className="actual-session"><small>WHAT YOU DID</small><strong>{state.actualWorkouts[state.today].title}</strong><WorkoutItemList items={itemsForWorkout(state.actualWorkouts[state.today])} empty="No exercise details recorded." /></div>}
                 </section>
                 <section className="panel meal-panel"><div className="panel-heading"><span>TODAY'S FOOD</span><span className="panel-icon">♢</span></div>
-                  <div className="meal"><small>BREAKFAST · {actualMeals?.breakfast ? "ACTUAL" : "PLAN"}</small><p>{actualMeals?.breakfast || todayMeals.breakfast || "Not planned"}</p></div>
-                  <div className="meal"><small>DINNER · {actualMeals?.dinner ? "ACTUAL" : "PLAN"}</small><p>{actualMeals?.dinner || todayMeals.dinner || "Not planned"}</p></div>
-                  {(actualMeals?.lunch || actualMeals?.snacks) && <p className="extra-meals">{actualMeals.lunch ? "Lunch: " + actualMeals.lunch : ""}{actualMeals.lunch && actualMeals.snacks ? " · " : ""}{actualMeals.snacks ? "Snacks: " + actualMeals.snacks : ""}</p>}
+                  {displayedMeals.map(({ field, actual, planned }) => <div className="meal" key={field}><small>{field.toUpperCase()} · {actual ? "ACTUAL" : "PLAN"}</small><p>{actual || planned}</p></div>)}
+                  {displayedMeals.length === 0 && <p className="panel-copy">No meals planned or logged today.</p>}
                   <button className="log-food-button" onClick={() => { setMealDate(state.today); setMealInput(state.meals[state.today] ?? emptyMeals()); setMealEditor(true); }}>{hasActualMeals ? "Edit what I ate" : "+ Log what I ate"}</button>
                 </section>
               </div>
@@ -663,7 +686,7 @@ function App() {
                 <button aria-pressed={planEditorSection === "dates"} className={planEditorSection === "dates" ? "active" : ""} onClick={() => setPlanEditorSection("dates")}>Date changes</button>
               </div>
               {planEditorSection === "workouts" && <section className="panel plan-editor-panel"><div className="plan-editor-heading"><div><span className="section-kicker">REPEATS EACH WEEK</span><h2>Your workout schedule</h2></div><span>01 — 07</span></div>
-                <div className="weekly-workout-list">{weekdayNames.map((name, i) => { const workout = scheduleInput.workouts[i] ?? starterSchedule().workouts[i]; return <article className="weekly-workout-row" key={name}><div className="weekly-day"><strong>{name.slice(0, 3)}</strong><small>{name}</small></div><div className="weekly-workout-fields"><label className="workout-title-field"><span>Session</span><input aria-label={`${name} workout name`} value={workout.title} disabled={workout.restDay} onChange={e => updateWeeklyWorkout(i, { title: e.target.value })} placeholder="Workout name" maxLength={80} /></label><label className="rest-toggle"><input type="checkbox" checked={workout.restDay} onChange={e => updateWeeklyWorkout(i, { restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || workout.restDay ? [] : itemsForWorkout(workout), details: "" })} /><span>Rest day</span></label>{!workout.restDay && <details className="exercise-accordion" open={i === today.getDay()}><summary>Exercises · {itemsForWorkout(workout).length}</summary><WorkoutExerciseRows items={itemsForWorkout(workout)} idPrefix={`weekly-${i}`} onChange={items => updateWeeklyWorkout(i, { items, details: "" })} /></details>}</div></article>; })}</div>
+                <div className="weekly-workout-list">{weekdayNames.map((name, i) => { const workout = scheduleInput.workouts[i] ?? starterSchedule().workouts[i]; return <article className="weekly-workout-row" key={name}><div className="weekly-day"><strong>{name.slice(0, 3)}</strong><small>{name}</small></div><div className="weekly-workout-fields"><label className="workout-title-field"><span>Session</span><input aria-label={`${name} workout name`} value={workout.title} disabled={workout.restDay} onChange={e => updateWeeklyWorkout(i, { title: e.target.value })} placeholder="Workout name" maxLength={80} /></label><label className="rest-toggle"><input type="checkbox" checked={workout.restDay} onChange={e => updateWeeklyWorkout(i, { restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || workout.restDay ? [] : itemsForWorkout(workout), details: "" })} /><span>Rest day</span></label>{!workout.restDay && <><label className="session-duration-field">Session target (min)<input type="number" min="1" max="600" step="1" value={workout.durationMinutes || 30} onChange={e => updateWeeklyWorkout(i, { durationMinutes: Number(e.target.value) || 30 })} /></label><details className="exercise-accordion" open={i === today.getDay()}><summary>Exercises · {itemsForWorkout(workout).length}</summary><WorkoutExerciseRows timed items={itemsForWorkout(workout)} idPrefix={`weekly-${i}`} onChange={items => updateWeeklyWorkout(i, { items, details: "" })} /></details></>}</div></article>; })}</div>
                 <div className="plan-save-row"><span>Save the weekly pattern or replace all upcoming one-day workout changes.</span><div><button className="quiet-button" disabled={busy} onClick={() => act<Snapshot>("save_schedule", { schedule: scheduleInput }, s => { setState(s); setScheduleInput(s.schedule); })}>Save weekly pattern</button><button className="save-button" disabled={busy} onClick={() => applyScheduleToRemaining("workouts")}>Apply to remaining days</button></div></div>
               </section>}
               {planEditorSection === "meals" && <section className="panel plan-editor-panel"><div className="plan-editor-heading"><div><span className="section-kicker">REPEATS EACH WEEK</span><h2>Your meal schedule</h2></div><span>01 — 07</span></div>
@@ -671,7 +694,7 @@ function App() {
                 <div className="plan-save-row"><span>Leave a meal blank if you prefer it open.</span><div><button className="quiet-button" disabled={busy} onClick={() => act<Snapshot>("save_schedule", { schedule: scheduleInput }, s => { setState(s); setScheduleInput(s.schedule); })}>Save weekly menu</button><button className="save-button" disabled={busy} onClick={() => applyScheduleToRemaining("meals")}>Apply to remaining days</button></div></div>
               </section>}
               {planEditorSection === "dates" && <section className="panel plan-editor-panel date-plan-panel"><div className="plan-editor-heading"><div><span className="section-kicker">A CHANGE OF PLANS</span><h2>Adjust a specific day</h2></div><span>ONE DAY</span></div><label className="date-plan-picker">Choose a date<input type="date" min={state.today < state.plan.startDate ? state.plan.startDate : state.today} max={state.plan.endDate} value={planDateInput} onChange={e => setPlanDateInput(e.target.value)} /></label>
-                {dateWorkout && <><h3 className="editor-subhead">Workout · {planDateInput && dateOf(planDateInput).toLocaleDateString("en-KE", { weekday: "long", month: "short", day: "numeric" })}</h3><div className="date-workout-fields"><label className="rest-toggle"><input type="checkbox" checked={dateWorkout.restDay} onChange={e => changeDateWorkout({ restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || dateWorkout.restDay ? [] : itemsForWorkout(dateWorkout), details: "" })} /><span>Rest day</span></label><label className="workout-title-field"><span>Session</span><input value={dateWorkout.title} disabled={dateWorkout.restDay} onChange={e => changeDateWorkout({ title: e.target.value })} maxLength={80} placeholder="Workout name" /></label>{!dateWorkout.restDay && <WorkoutExerciseRows items={itemsForWorkout(dateWorkout)} idPrefix="date-plan" onChange={items => changeDateWorkout({ items, details: "" })} />}</div><h3 className="editor-subhead">Meals</h3><div className="date-meal-fields">{(["breakfast", "lunch", "dinner", "snacks"] as const).map(field => <label key={field}>{field}<input value={dateMeals[field]} maxLength={250} onChange={e => changeDateMeal(field, e.target.value)} placeholder="Optional" /></label>)}</div><div className="plan-save-row"><span>This date can differ from your repeating week.</span><div><button className="quiet-button" disabled={busy || !scheduleInput.workoutOverrides[planDateInput] && !scheduleInput.mealOverrides[planDateInput]} onClick={clearDatePlan}>Use weekly schedule</button><button className="save-button" disabled={busy || !planDateInput || planDateInput < state.today} onClick={saveDatePlan}>Save this day</button></div></div></>}
+                {dateWorkout && <><h3 className="editor-subhead">Workout · {planDateInput && dateOf(planDateInput).toLocaleDateString("en-KE", { weekday: "long", month: "short", day: "numeric" })}</h3><div className="date-workout-fields"><label className="rest-toggle"><input type="checkbox" checked={dateWorkout.restDay} onChange={e => changeDateWorkout({ restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || dateWorkout.restDay ? [] : itemsForWorkout(dateWorkout), details: "" })} /><span>Rest day</span></label><label className="workout-title-field"><span>Session</span><input value={dateWorkout.title} disabled={dateWorkout.restDay} onChange={e => changeDateWorkout({ title: e.target.value })} maxLength={80} placeholder="Workout name" /></label>{!dateWorkout.restDay && <><label className="session-duration-field">Session target (min)<input type="number" min="1" max="600" step="1" value={dateWorkout.durationMinutes || 30} onChange={e => changeDateWorkout({ durationMinutes: Number(e.target.value) || 30 })} /></label><WorkoutExerciseRows timed items={itemsForWorkout(dateWorkout)} idPrefix="date-plan" onChange={items => changeDateWorkout({ items, details: "" })} /></>}</div><h3 className="editor-subhead">Meals</h3><div className="date-meal-fields">{(["breakfast", "lunch", "dinner", "snacks"] as const).map(field => <label key={field}>{field}<input value={dateMeals[field]} maxLength={250} onChange={e => changeDateMeal(field, e.target.value)} placeholder="Optional" /></label>)}</div><div className="plan-save-row"><span>This date can differ from your repeating week.</span><div><button className="quiet-button" disabled={busy || !scheduleInput.workoutOverrides[planDateInput] && !scheduleInput.mealOverrides[planDateInput]} onClick={clearDatePlan}>Use weekly schedule</button><button className="save-button" disabled={busy || !planDateInput || planDateInput < state.today} onClick={saveDatePlan}>Save this day</button></div></div></>}
               </section>}
             </>}
             {tab === "meals" && <>
@@ -769,6 +792,12 @@ function App() {
           <div className="modal-actions"><button type="button" className="quiet-button" onClick={() => setWorkoutEditorOpen(false)}>Cancel</button><button className="save-button" type="submit" disabled={busy || !workoutEditorInput.title.trim()}>Save actual workout</button></div>
         </form>
       </div>}
+      {sessionDraft && state && <WorkoutSession initial={sessionDraft} onClose={closeWorkoutSession} onComplete={async () => {
+        try {
+          const updated = await invoke<Snapshot>("set_workout_status", { date: sessionDraft.date, status: "completed", reason: null });
+          setState(updated); notify("success", "Workout completed"); return true;
+        } catch (e) { const message = String(e); setError(message); notify("error", message); return false; }
+      }} />}
     </div>
   );
 }
