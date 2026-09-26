@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import WorkoutSession, { type SessionDraft, createSessionDraft, loadSessionDraft } from "./WorkoutSession";
 import "./App.css";
@@ -12,8 +12,8 @@ import "./App.css";
 type Measurement = { weight: number | null; waist: number | null };
 type Plan = { startDate: string; endDate: string; startWeight: number; targetWeight: number };
 type MealLog = { breakfast: string; lunch: string; dinner: string; snacks: string };
-type WorkoutItem = { name: string; reps: string; durationSeconds?: number; restSeconds?: number };
-type PlannedWorkout = { title: string; details: string; items?: WorkoutItem[]; restDay: boolean; durationMinutes?: number };
+type WorkoutItem = { name: string; reps: string; durationSeconds?: number; restSeconds?: number; videoSource?: string };
+type PlannedWorkout = { title: string; details: string; items?: WorkoutItem[]; restDay: boolean; durationMinutes?: number; videoSource?: string };
 type PlannedMeals = MealLog;
 type Schedule = { workouts: PlannedWorkout[]; meals: PlannedMeals[]; workoutOverrides: Record<string, PlannedWorkout>; mealOverrides: Record<string, PlannedMeals> };
 type UserProfile = { name: string; goal: string; preferences: string; equipment: string; availability: string };
@@ -51,6 +51,18 @@ function BrandMark() {
     <path d="m12 6.5 5.1 5.3h-3v4.8h-4.2v-4.8h-3L12 6.5Z" fill="currentColor" />
   </svg>;
 }
+function VideoSourceField({ value, onChange, label }: { value?: string; onChange: (value: string) => void; label: string }) {
+  const [loading, setLoading] = useState(false);
+  async function chooseFile() {
+    const selected = await open({ multiple: false, filters: [{ name: "Video", extensions: ["mp4", "m4v", "mov", "webm", "ogv"] }] });
+    if (!selected || typeof selected !== "string") return;
+    setLoading(true);
+    try { onChange(await invoke<string>("import_workout_video", { path: selected })); }
+    catch (error) { window.alert(`Could not add the video: ${String(error)}`); }
+    finally { setLoading(false); }
+  }
+  return <div className="video-source-field"><label><span>{label}</span><input value={value ?? ""} onChange={event => onChange(event.target.value)} maxLength={2048} placeholder="YouTube, video URL, or local file path" /></label><button type="button" disabled={loading} onClick={() => void chooseFile()}>{loading ? "Adding…" : "Choose file"}</button></div>;
+}
 function WorkoutExerciseRows({ items, onChange, idPrefix, timed = false }: { items: WorkoutItem[]; onChange: (items: WorkoutItem[]) => void; idPrefix: string; timed?: boolean }) {
   const [dragging, setDragging] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<{ index: number; edge: "before" | "after" } | null>(null);
@@ -82,6 +94,7 @@ function WorkoutExerciseRows({ items, onChange, idPrefix, timed = false }: { ite
       <label className="exercise-reps"><span className="visually-hidden">Sets, reps, or duration</span><input value={item.reps} maxLength={60} placeholder="3 × 10" onChange={e => onChange(items.map((current, i) => i === index ? { ...current, reps: e.target.value } : current))} /></label>
       {timed && <><label className="exercise-time"><span className="visually-hidden">{item.name || `Exercise ${index + 1}`} duration in seconds</span><input type="number" min="0" max="21600" step="1" value={item.durationSeconds || ""} placeholder="Work sec" title="Exercise duration in seconds" onChange={e => onChange(items.map((current, i) => i === index ? { ...current, durationSeconds: Number(e.target.value) || 0 } : current))} /></label><label className="exercise-time"><span className="visually-hidden">Rest after {item.name || `exercise ${index + 1}`} in seconds</span><input type="number" min="0" max="3600" step="1" value={item.restSeconds || ""} placeholder="Rest sec" title="Rest after this exercise in seconds" disabled={index === items.length - 1} onChange={e => onChange(items.map((current, i) => i === index ? { ...current, restSeconds: Number(e.target.value) || 0 } : current))} /></label></>}
       <div className="exercise-row-actions"><button type="button" aria-label="Move exercise up" disabled={index === 0} onClick={() => move(index, index - 1)}>↑</button><button type="button" aria-label="Move exercise down" disabled={index === items.length - 1} onClick={() => move(index, index + 1)}>↓</button><button type="button" className="exercise-delete" aria-label={`Delete ${item.name || `exercise ${index + 1}`}`} onClick={() => onChange(items.filter((_, i) => i !== index))}>×</button></div>
+      {timed && <VideoSourceField label={`Video for ${item.name || `exercise ${index + 1}`} (optional)`} value={item.videoSource} onChange={videoSource => onChange(items.map((current, i) => i === index ? { ...current, videoSource } : current))} />}
     </div>)}
     <datalist id={`${idPrefix}-suggestions`}>{exerciseSuggestions.map(name => <option key={name} value={name} />)}</datalist>
     <button type="button" className="add-exercise-button" onClick={() => onChange([...items, { name: "", reps: "" }])}>＋ Add exercise</button>
@@ -472,7 +485,7 @@ function App() {
     if (!planDateInput) return;
     const workout = workoutForDate(dateOf(planDateInput), state!.plan, scheduleInput);
     const meals = mealsForDate(dateOf(planDateInput), scheduleInput);
-    const next: Schedule = { ...scheduleInput, workoutOverrides: { ...scheduleInput.workoutOverrides, [planDateInput]: { title: workout.title, details: workout.details, items: itemsForWorkout(workout), restDay: workout.restDay, durationMinutes: workout.durationMinutes || 30 } }, mealOverrides: { ...scheduleInput.mealOverrides, [planDateInput]: meals } };
+    const next: Schedule = { ...scheduleInput, workoutOverrides: { ...scheduleInput.workoutOverrides, [planDateInput]: { title: workout.title, details: workout.details, items: itemsForWorkout(workout), restDay: workout.restDay, durationMinutes: workout.durationMinutes || 30, videoSource: workout.videoSource || "" } }, mealOverrides: { ...scheduleInput.mealOverrides, [planDateInput]: meals } };
     act<Snapshot>("save_schedule", { schedule: next }, s => { setState(s); setScheduleInput(s.schedule); });
   }
   function clearDatePlan() {
@@ -490,7 +503,7 @@ function App() {
   function changeDateWorkout(update: Partial<PlannedWorkout>) {
     if (!planDateInput || !state) return;
     const current = workoutForDate(dateOf(planDateInput), state.plan, scheduleInput);
-    setScheduleInput(s => ({ ...s, workoutOverrides: { ...s.workoutOverrides, [planDateInput]: { title: current.title, details: current.details, items: itemsForWorkout(current), restDay: current.restDay, ...update } } }));
+    setScheduleInput(s => ({ ...s, workoutOverrides: { ...s.workoutOverrides, [planDateInput]: { title: current.title, details: current.details, items: itemsForWorkout(current), restDay: current.restDay, videoSource: current.videoSource || "", ...update } } }));
   }
   function changeDateMeal(field: keyof PlannedMeals, value: string) {
     if (!planDateInput) return;
@@ -514,7 +527,8 @@ function App() {
       });
       if (!path) return;
       setExportStage("Saving your backup…");
-      const contents = await invoke<string>("export_data");
+      const session = (() => { try { return JSON.parse(localStorage.getItem("daily-drive-active-session") || "null"); } catch { return null; } })();
+      const contents = await invoke<string>("export_data", { session });
       await invoke("write_export_file", { path, contents });
       setExportPath(path);
       notify("success", "Your backup was exported");
@@ -551,7 +565,8 @@ function App() {
     setBusy(true); setError("");
     try {
       const contents = await file.text();
-      const imported = await invoke<Snapshot>("import_data", { contents });
+      const outcome = await invoke<{ snapshot: Snapshot; session: SessionDraft | null }>("import_data", { contents });
+      const imported = outcome.snapshot;
       setState(imported);
       setAlarmInput(imported.alarmTime);
       setAlarmSoundInput(alarmSoundChoices.includes(imported.alarmSound) ? imported.alarmSound : alarmSoundChoices[0]);
@@ -560,6 +575,11 @@ function App() {
       setMeasurementDate(imported.today);
       setMealDate(imported.today);
       setProfileName(imported.profile?.name ?? "");
+      if (outcome.session && !imported.completed.includes(outcome.session.date)) {
+        try { localStorage.setItem("daily-drive-active-session", JSON.stringify(outcome.session)); } catch { /* Imported plan remains available. */ }
+        setSessionDraft(loadSessionDraft());
+        void invoke<Snapshot>("set_session_active", { active: true }).then(setState).catch(() => {});
+      }
       notify("success", "Your data was imported");
     } catch (e) { setError(String(e)); notify("error", String(e)); }
     finally {
@@ -686,7 +706,7 @@ function App() {
                 <button aria-pressed={planEditorSection === "dates"} className={planEditorSection === "dates" ? "active" : ""} onClick={() => setPlanEditorSection("dates")}>Date changes</button>
               </div>
               {planEditorSection === "workouts" && <section className="panel plan-editor-panel"><div className="plan-editor-heading"><div><span className="section-kicker">REPEATS EACH WEEK</span><h2>Your workout schedule</h2></div><span>01 — 07</span></div>
-                <div className="weekly-workout-list">{weekdayNames.map((name, i) => { const workout = scheduleInput.workouts[i] ?? starterSchedule().workouts[i]; return <article className="weekly-workout-row" key={name}><div className="weekly-day"><strong>{name.slice(0, 3)}</strong><small>{name}</small></div><div className="weekly-workout-fields"><label className="workout-title-field"><span>Session</span><input aria-label={`${name} workout name`} value={workout.title} disabled={workout.restDay} onChange={e => updateWeeklyWorkout(i, { title: e.target.value })} placeholder="Workout name" maxLength={80} /></label><label className="rest-toggle"><input type="checkbox" checked={workout.restDay} onChange={e => updateWeeklyWorkout(i, { restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || workout.restDay ? [] : itemsForWorkout(workout), details: "" })} /><span>Rest day</span></label>{!workout.restDay && <><label className="session-duration-field">Session target (min)<input type="number" min="1" max="600" step="1" value={workout.durationMinutes || 30} onChange={e => updateWeeklyWorkout(i, { durationMinutes: Number(e.target.value) || 30 })} /></label><details className="exercise-accordion" open={i === today.getDay()}><summary>Exercises · {itemsForWorkout(workout).length}</summary><WorkoutExerciseRows timed items={itemsForWorkout(workout)} idPrefix={`weekly-${i}`} onChange={items => updateWeeklyWorkout(i, { items, details: "" })} /></details></>}</div></article>; })}</div>
+                <div className="weekly-workout-list">{weekdayNames.map((name, i) => { const workout = scheduleInput.workouts[i] ?? starterSchedule().workouts[i]; return <article className="weekly-workout-row" key={name}><div className="weekly-day"><strong>{name.slice(0, 3)}</strong><small>{name}</small></div><div className="weekly-workout-fields"><label className="workout-title-field"><span>Session</span><input aria-label={`${name} workout name`} value={workout.title} disabled={workout.restDay} onChange={e => updateWeeklyWorkout(i, { title: e.target.value })} placeholder="Workout name" maxLength={80} /></label><label className="rest-toggle"><input type="checkbox" checked={workout.restDay} onChange={e => updateWeeklyWorkout(i, { restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || workout.restDay ? [] : itemsForWorkout(workout), details: "" })} /><span>Rest day</span></label>{!workout.restDay && <><label className="session-duration-field">Session target (min)<input type="number" min="1" max="600" step="1" value={workout.durationMinutes || 30} onChange={e => updateWeeklyWorkout(i, { durationMinutes: Number(e.target.value) || 30 })} /></label><VideoSourceField label="Session video (optional)" value={workout.videoSource} onChange={videoSource => updateWeeklyWorkout(i, { videoSource })} /><details className="exercise-accordion" open={i === today.getDay()}><summary>Exercises · {itemsForWorkout(workout).length}</summary><WorkoutExerciseRows timed items={itemsForWorkout(workout)} idPrefix={`weekly-${i}`} onChange={items => updateWeeklyWorkout(i, { items, details: "" })} /></details></>}</div></article>; })}</div>
                 <div className="plan-save-row"><span>Save the weekly pattern or replace all upcoming one-day workout changes.</span><div><button className="quiet-button" disabled={busy} onClick={() => act<Snapshot>("save_schedule", { schedule: scheduleInput }, s => { setState(s); setScheduleInput(s.schedule); })}>Save weekly pattern</button><button className="save-button" disabled={busy} onClick={() => applyScheduleToRemaining("workouts")}>Apply to remaining days</button></div></div>
               </section>}
               {planEditorSection === "meals" && <section className="panel plan-editor-panel"><div className="plan-editor-heading"><div><span className="section-kicker">REPEATS EACH WEEK</span><h2>Your meal schedule</h2></div><span>01 — 07</span></div>
@@ -694,7 +714,7 @@ function App() {
                 <div className="plan-save-row"><span>Leave a meal blank if you prefer it open.</span><div><button className="quiet-button" disabled={busy} onClick={() => act<Snapshot>("save_schedule", { schedule: scheduleInput }, s => { setState(s); setScheduleInput(s.schedule); })}>Save weekly menu</button><button className="save-button" disabled={busy} onClick={() => applyScheduleToRemaining("meals")}>Apply to remaining days</button></div></div>
               </section>}
               {planEditorSection === "dates" && <section className="panel plan-editor-panel date-plan-panel"><div className="plan-editor-heading"><div><span className="section-kicker">A CHANGE OF PLANS</span><h2>Adjust a specific day</h2></div><span>ONE DAY</span></div><label className="date-plan-picker">Choose a date<input type="date" min={state.today < state.plan.startDate ? state.plan.startDate : state.today} max={state.plan.endDate} value={planDateInput} onChange={e => setPlanDateInput(e.target.value)} /></label>
-                {dateWorkout && <><h3 className="editor-subhead">Workout · {planDateInput && dateOf(planDateInput).toLocaleDateString("en-KE", { weekday: "long", month: "short", day: "numeric" })}</h3><div className="date-workout-fields"><label className="rest-toggle"><input type="checkbox" checked={dateWorkout.restDay} onChange={e => changeDateWorkout({ restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || dateWorkout.restDay ? [] : itemsForWorkout(dateWorkout), details: "" })} /><span>Rest day</span></label><label className="workout-title-field"><span>Session</span><input value={dateWorkout.title} disabled={dateWorkout.restDay} onChange={e => changeDateWorkout({ title: e.target.value })} maxLength={80} placeholder="Workout name" /></label>{!dateWorkout.restDay && <><label className="session-duration-field">Session target (min)<input type="number" min="1" max="600" step="1" value={dateWorkout.durationMinutes || 30} onChange={e => changeDateWorkout({ durationMinutes: Number(e.target.value) || 30 })} /></label><WorkoutExerciseRows timed items={itemsForWorkout(dateWorkout)} idPrefix="date-plan" onChange={items => changeDateWorkout({ items, details: "" })} /></>}</div><h3 className="editor-subhead">Meals</h3><div className="date-meal-fields">{(["breakfast", "lunch", "dinner", "snacks"] as const).map(field => <label key={field}>{field}<input value={dateMeals[field]} maxLength={250} onChange={e => changeDateMeal(field, e.target.value)} placeholder="Optional" /></label>)}</div><div className="plan-save-row"><span>This date can differ from your repeating week.</span><div><button className="quiet-button" disabled={busy || !scheduleInput.workoutOverrides[planDateInput] && !scheduleInput.mealOverrides[planDateInput]} onClick={clearDatePlan}>Use weekly schedule</button><button className="save-button" disabled={busy || !planDateInput || planDateInput < state.today} onClick={saveDatePlan}>Save this day</button></div></div></>}
+                {dateWorkout && <><h3 className="editor-subhead">Workout · {planDateInput && dateOf(planDateInput).toLocaleDateString("en-KE", { weekday: "long", month: "short", day: "numeric" })}</h3><div className="date-workout-fields"><label className="rest-toggle"><input type="checkbox" checked={dateWorkout.restDay} onChange={e => changeDateWorkout({ restDay: e.target.checked, title: e.target.checked ? "Rest day" : "New workout", items: e.target.checked || dateWorkout.restDay ? [] : itemsForWorkout(dateWorkout), details: "" })} /><span>Rest day</span></label><label className="workout-title-field"><span>Session</span><input value={dateWorkout.title} disabled={dateWorkout.restDay} onChange={e => changeDateWorkout({ title: e.target.value })} maxLength={80} placeholder="Workout name" /></label>{!dateWorkout.restDay && <><label className="session-duration-field">Session target (min)<input type="number" min="1" max="600" step="1" value={dateWorkout.durationMinutes || 30} onChange={e => changeDateWorkout({ durationMinutes: Number(e.target.value) || 30 })} /></label><VideoSourceField label="Session video (optional)" value={dateWorkout.videoSource} onChange={videoSource => changeDateWorkout({ videoSource })} /><WorkoutExerciseRows timed items={itemsForWorkout(dateWorkout)} idPrefix="date-plan" onChange={items => changeDateWorkout({ items, details: "" })} /></>}</div><h3 className="editor-subhead">Meals</h3><div className="date-meal-fields">{(["breakfast", "lunch", "dinner", "snacks"] as const).map(field => <label key={field}>{field}<input value={dateMeals[field]} maxLength={250} onChange={e => changeDateMeal(field, e.target.value)} placeholder="Optional" /></label>)}</div><div className="plan-save-row"><span>This date can differ from your repeating week.</span><div><button className="quiet-button" disabled={busy || !scheduleInput.workoutOverrides[planDateInput] && !scheduleInput.mealOverrides[planDateInput]} onClick={clearDatePlan}>Use weekly schedule</button><button className="save-button" disabled={busy || !planDateInput || planDateInput < state.today} onClick={saveDatePlan}>Save this day</button></div></div></>}
               </section>}
             </>}
             {tab === "meals" && <>
@@ -792,7 +812,7 @@ function App() {
           <div className="modal-actions"><button type="button" className="quiet-button" onClick={() => setWorkoutEditorOpen(false)}>Cancel</button><button className="save-button" type="submit" disabled={busy || !workoutEditorInput.title.trim()}>Save actual workout</button></div>
         </form>
       </div>}
-      {sessionDraft && state && <WorkoutSession initial={sessionDraft} onClose={closeWorkoutSession} onComplete={async () => {
+      {sessionDraft && state && <WorkoutSession initial={sessionDraft} onClose={closeWorkoutSession} onExport={exportData} onComplete={async () => {
         try {
           const updated = await invoke<Snapshot>("set_workout_status", { date: sessionDraft.date, status: "completed", reason: null });
           setState(updated); notify("success", "Workout completed"); return true;

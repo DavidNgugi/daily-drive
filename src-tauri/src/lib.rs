@@ -1,6 +1,7 @@
 use chrono::{Datelike, Local, NaiveDate};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::PathBuf, process::Command, sync::Mutex, thread, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, BTreeSet}, fs, hash::{Hash, Hasher}, io::{Read, Write}, net::TcpListener, path::PathBuf, process::Command, sync::{Mutex, OnceLock}, thread, time::{Duration, Instant}};
 use tauri::{Emitter, Manager, WindowEvent, menu::{Menu, MenuItem}, tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -34,11 +35,11 @@ struct MealLog { breakfast: String, lunch: String, dinner: String, snacks: Strin
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct WorkoutItem { name: String, reps: String, #[serde(default)] duration_seconds: u32, #[serde(default)] rest_seconds: u32 }
+struct WorkoutItem { name: String, reps: String, #[serde(default)] duration_seconds: u32, #[serde(default)] rest_seconds: u32, #[serde(default)] video_source: String }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-struct PlannedWorkout { title: String, details: String, items: Vec<WorkoutItem>, rest_day: bool, #[serde(default = "default_session_minutes")] duration_minutes: u32 }
+struct PlannedWorkout { title: String, details: String, items: Vec<WorkoutItem>, rest_day: bool, #[serde(default = "default_session_minutes")] duration_minutes: u32, video_source: String }
 
 fn default_session_minutes() -> u32 { 30 }
 
@@ -52,7 +53,7 @@ struct Schedule { workouts: Vec<PlannedWorkout>, meals: Vec<PlannedMeals>, worko
 
 impl Default for Schedule {
     fn default() -> Self {
-        let workout = |title: &str, details: &str, rest_day: bool| PlannedWorkout { title: title.into(), details: details.into(), items: Vec::new(), rest_day, duration_minutes: default_session_minutes() };
+        let workout = |title: &str, details: &str, rest_day: bool| PlannedWorkout { title: title.into(), details: details.into(), items: Vec::new(), rest_day, duration_minutes: default_session_minutes(), video_source: String::new() };
         Self {
             workouts: vec![
                 workout("Rest & recharge", "Take the day off and recover.", true),
@@ -102,9 +103,16 @@ struct SavedData {
     #[serde(default)] actual_workouts: BTreeMap<String, ActualWorkout>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ImportFile { format: String, version: u8, data: SavedData }
+struct ImportFile { format: String, version: u8, data: SavedData, #[serde(default)] videos: Vec<ExportVideo>, #[serde(default)] session: Option<serde_json::Value> }
+
+#[derive(Serialize, Deserialize)]
+struct ExportVideo { source: String, contents: String }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportResult { snapshot: Snapshot, session: Option<serde_json::Value> }
 
 impl Default for SavedData {
     fn default() -> Self {
@@ -169,11 +177,76 @@ fn save(state: &AppState, data: &SavedData) -> Result<(), String> {
     fs::rename(temp, &state.path).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn import_workout_video(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let source = PathBuf::from(path.trim());
+    let source = source.canonicalize().map_err(|_| "Video file was not found.".to_string())?;
+    let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !["mp4", "m4v", "mov", "webm", "ogv"].contains(&extension.as_str()) {
+        return Err("Choose an MP4, M4V, MOV, WebM, or OGV video file.".into());
+    }
+    let metadata = source.metadata().map_err(|e| e.to_string())?;
+    if !metadata.is_file() { return Err("Choose a video file.".into()); }
+    let directory = app.path().app_data_dir().map_err(|e| e.to_string())?.join("videos");
+    fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    if source.starts_with(&directory) { return Ok(source.to_string_lossy().into_owned()); }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    metadata.len().hash(&mut hasher);
+    metadata.modified().ok().hash(&mut hasher);
+    let destination = directory.join(format!("{:016x}.{extension}", hasher.finish()));
+    if !destination.exists() {
+        let temporary = destination.with_extension(format!("{extension}.part"));
+        fs::copy(&source, &temporary).map_err(|e| e.to_string())?;
+        fs::rename(&temporary, &destination).map_err(|e| e.to_string())?;
+    }
+    Ok(destination.to_string_lossy().into_owned())
+}
+
+static YOUTUBE_PLAYER_PORT: OnceLock<u16> = OnceLock::new();
+
+#[tauri::command]
+fn youtube_embed_url(id: String, start: u32) -> Result<String, String> {
+    if id.len() != 11 || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') {
+        return Err("This YouTube link is invalid.".into());
+    }
+    let port = if let Some(port) = YOUTUBE_PLAYER_PORT.get() { *port } else {
+        let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("Could not start the video player: {e}"))?;
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        thread::spawn(move || {
+            for connection in listener.incoming() {
+                if let Ok(mut stream) = connection {
+                    let mut request = [0_u8; 2048];
+                    let count = stream.read(&mut request).unwrap_or(0);
+                    let request = String::from_utf8_lossy(&request[..count]);
+                    let path = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("");
+                    let (status, body) = youtube_player_page(path, port);
+                    let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            }
+        });
+        *YOUTUBE_PLAYER_PORT.get_or_init(|| port)
+    };
+    Ok(format!("http://127.0.0.1:{port}/embed/{id}?start={}", start.min(86400)))
+}
+
+fn youtube_player_page(path: &str, port: u16) -> (&'static str, String) {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let id = route.strip_prefix("/embed/").unwrap_or("");
+    if id.len() != 11 || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') {
+        return ("404 Not Found", "Not found".into());
+    }
+    let start = query.strip_prefix("start=").and_then(|value| value.parse::<u32>().ok()).unwrap_or(0).min(86400);
+    let html = format!(r#"<!doctype html><html><head><meta name="referrer" content="strict-origin-when-cross-origin"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,iframe{{margin:0;width:100%;height:100%;overflow:hidden;background:#000;border:0}}</style></head><body><iframe id="player" src="https://www.youtube-nocookie.com/embed/{id}?autoplay=1&amp;controls=1&amp;enablejsapi=1&amp;playsinline=1&amp;origin=http%3A%2F%2F127.0.0.1%3A{port}&amp;start={start}" referrerpolicy="strict-origin-when-cross-origin" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe><script>window.addEventListener('message',function(event){{var data;try{{data=typeof event.data==='string'?JSON.parse(event.data):event.data}}catch(_error){{return}}if(data&&data.event==='command'&&['playVideo','pauseVideo'].includes(data.func))document.getElementById('player').contentWindow.postMessage(JSON.stringify({{event:'command',func:data.func,args:[]}}),'https://www.youtube-nocookie.com')}})</script></body></html>"#);
+    ("200 OK", html)
+}
+
 fn validate_schedule(schedule: &Schedule) -> Result<(), String> {
     if schedule.workouts.len() != 7 || schedule.meals.len() != 7 {
         return Err("A weekly plan must include all seven days.".into());
     }
-    let valid_workout = |w: &PlannedWorkout| w.title.chars().count() <= 80 && w.details.chars().count() <= 500 && w.duration_minutes <= 600 && w.items.len() <= 60 && w.items.iter().all(|item| item.name.chars().count() <= 100 && item.reps.chars().count() <= 60 && item.duration_seconds <= 21600 && item.rest_seconds <= 3600) && (w.rest_day || !w.title.trim().is_empty());
+    let valid_workout = |w: &PlannedWorkout| w.title.chars().count() <= 80 && w.details.chars().count() <= 500 && w.video_source.chars().count() <= 2048 && w.duration_minutes <= 600 && w.items.len() <= 60 && w.items.iter().all(|item| item.name.chars().count() <= 100 && item.reps.chars().count() <= 60 && item.duration_seconds <= 21600 && item.rest_seconds <= 3600 && item.video_source.chars().count() <= 2048) && (w.rest_day || !w.title.trim().is_empty());
     let valid_meals = |m: &PlannedMeals| [&m.breakfast, &m.lunch, &m.dinner, &m.snacks].iter().all(|v| v.chars().count() <= 250);
     if schedule.workouts.iter().any(|w| !valid_workout(w)) || schedule.workout_overrides.values().any(|w| !valid_workout(w)) {
         return Err("Check workout names and exercise rows (names up to 100 characters, sets or reps up to 60).".into());
@@ -283,10 +356,57 @@ fn save_profile(app: tauri::AppHandle, state: tauri::State<AppState>, name: Stri
 fn get_state(state: tauri::State<AppState>) -> Snapshot { snapshot(&state) }
 
 #[tauri::command]
-fn export_data(state: tauri::State<AppState>) -> Result<String, String> {
+fn export_data(state: tauri::State<AppState>, session: Option<serde_json::Value>) -> Result<String, String> {
     let data = state.data.lock().map_err(|e| e.to_string())?;
-    serde_json::to_string_pretty(&serde_json::json!({ "format": "daily-drive", "version": 1, "data": &*data }))
-        .map_err(|e| e.to_string())
+    let mut sources = BTreeSet::new();
+    for workout in data.schedule.workouts.iter().chain(data.schedule.workout_overrides.values()) {
+        sources.insert(workout.video_source.as_str());
+        for item in &workout.items { sources.insert(item.video_source.as_str()); }
+    }
+    for workout in data.actual_workouts.values() {
+        for item in &workout.items { sources.insert(item.video_source.as_str()); }
+    }
+    if let Some(value) = &session { collect_video_sources(value, &mut sources); }
+    let mut videos = Vec::new();
+    for source in sources {
+        let path = if let Some(path) = source.strip_prefix("file://") { path } else { source };
+        if !path.starts_with('/') { continue; }
+        let path = PathBuf::from(path);
+        video_extension(&path)?;
+        let metadata = path.metadata().map_err(|_| format!("Could not back up local video: {}", path.display()))?;
+        if !metadata.is_file() || metadata.len() > 1_000_000_000 { return Err(format!("Local video cannot be backed up: {}", path.display())); }
+        let contents = BASE64.encode(fs::read(&path).map_err(|e| format!("Could not read video {}: {e}", path.display()))?);
+        videos.push(ExportVideo { source: source.to_string(), contents });
+    }
+    serde_json::to_string(&ImportFile { format: "daily-drive".into(), version: 2, data: data.clone(), videos, session }).map_err(|e| e.to_string())
+}
+
+fn video_extension(path: &std::path::Path) -> Result<String, String> {
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    if ["mp4", "m4v", "mov", "webm", "ogv"].contains(&extension.as_str()) { Ok(extension) }
+    else { Err("A linked local video has an unsupported file type.".into()) }
+}
+
+fn collect_video_sources<'a>(value: &'a serde_json::Value, sources: &mut BTreeSet<&'a str>) {
+    match value {
+        serde_json::Value::Object(object) => for (key, child) in object {
+            if key == "videoSource" { if let Some(source) = child.as_str() { sources.insert(source); } }
+            collect_video_sources(child, sources);
+        },
+        serde_json::Value::Array(items) => for child in items { collect_video_sources(child, sources); },
+        _ => {},
+    }
+}
+
+fn replace_video_sources(value: &mut serde_json::Value, paths: &BTreeMap<String, String>) {
+    match value {
+        serde_json::Value::Object(object) => for (key, child) in object {
+            if key == "videoSource" { if let Some(source) = child.as_str() { if let Some(path) = paths.get(source) { *child = serde_json::Value::String(path.clone()); } } }
+            replace_video_sources(child, paths);
+        },
+        serde_json::Value::Array(items) => for child in items { replace_video_sources(child, paths); },
+        _ => {},
+    }
 }
 
 #[tauri::command]
@@ -309,9 +429,9 @@ fn reveal_export_file(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: String) -> Result<Snapshot, String> {
-    let imported: ImportFile = serde_json::from_str(&contents).map_err(|_| "This file is not a valid Daily Drive export.".to_string())?;
-    if imported.format != "daily-drive" || imported.version != 1 { return Err("This Daily Drive export version is not supported.".into()); }
+fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: String) -> Result<ImportResult, String> {
+    let mut imported: ImportFile = serde_json::from_str(&contents).map_err(|_| "This file is not a valid Daily Drive export.".to_string())?;
+    if imported.format != "daily-drive" || ![1, 2].contains(&imported.version) { return Err("This Daily Drive export version is not supported.".into()); }
     let start = NaiveDate::parse_from_str(&imported.data.plan.start_date, "%Y-%m-%d").map_err(|_| "The export contains an invalid plan date.")?;
     let end = NaiveDate::parse_from_str(&imported.data.plan.end_date, "%Y-%m-%d").map_err(|_| "The export contains an invalid plan date.")?;
     if end < start || (end - start).num_days() > 365 || !(30.0..=300.0).contains(&imported.data.plan.start_weight) || !(30.0..=300.0).contains(&imported.data.plan.target_weight) {
@@ -326,6 +446,34 @@ fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: S
     for date in imported.data.completed.iter().chain(imported.data.skipped.keys()).chain(imported.data.measurements.keys()).chain(imported.data.meals.keys()).chain(imported.data.actual_workouts.keys()) {
         NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| "The export contains an invalid history date.")?;
     }
+
+    let mut decoded_videos = Vec::new();
+    for video in &imported.videos {
+        if video.source.len() > 2048 { return Err("The export contains an invalid video path.".into()); }
+        let extension = video_extension(std::path::Path::new(&video.source))?;
+        if video.contents.len() > 1_400_000_000 { return Err("A video in the backup is too large.".into()); }
+        let bytes = BASE64.decode(&video.contents).map_err(|_| "The export contains damaged video data.".to_string())?;
+        if bytes.len() > 1_000_000_000 { return Err("A video in the backup is too large.".into()); }
+        decoded_videos.push((video.source.clone(), extension, bytes));
+    }
+    let directory = app.path().app_data_dir().map_err(|e| e.to_string())?.join("videos");
+    fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let mut paths = BTreeMap::new();
+    for (source, extension, bytes) in decoded_videos {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        let destination = directory.join(format!("import-{:016x}.{extension}", hasher.finish()));
+        if !destination.exists() { fs::write(&destination, bytes).map_err(|e| format!("Could not restore a video: {e}"))?; }
+        paths.insert(source, destination.to_string_lossy().into_owned());
+    }
+    for workout in imported.data.schedule.workouts.iter_mut().chain(imported.data.schedule.workout_overrides.values_mut()) {
+        if let Some(path) = paths.get(&workout.video_source) { workout.video_source = path.clone(); }
+        for item in &mut workout.items { if let Some(path) = paths.get(&item.video_source) { item.video_source = path.clone(); } }
+    }
+    for workout in imported.data.actual_workouts.values_mut() {
+        for item in &mut workout.items { if let Some(path) = paths.get(&item.video_source) { item.video_source = path.clone(); } }
+    }
+    if let Some(session) = &mut imported.session { replace_video_sources(session, &paths); }
 
     let mut current = state.data.lock().map_err(|e| e.to_string())?;
     let mut merged = current.clone();
@@ -351,7 +499,7 @@ fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: S
     drop(current);
     let result = snapshot(&state);
     let _ = app.emit("state-changed", &result);
-    Ok(result)
+    Ok(ImportResult { snapshot: result, session: imported.session })
 }
 
 #[tauri::command]
@@ -645,7 +793,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, export_data, write_export_file, reveal_export_file, import_data, finish_setup, save_schedule, save_actual_workout, save_profile, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_session_active, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
+        .invoke_handler(tauri::generate_handler![get_state, export_data, write_export_file, reveal_export_file, import_data, import_workout_video, youtube_embed_url, finish_setup, save_schedule, save_actual_workout, save_profile, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_session_active, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
         .build(tauri::generate_context!())
         .expect("error while building daily-drive")
         .run(|app, event| {
