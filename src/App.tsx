@@ -46,10 +46,7 @@ const itemsForWorkout = (workout: Pick<PlannedWorkout, "title" | "items" | "deta
   return parts;
 };
 function BrandMark() {
-  return <svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M12 2.3 20.5 5.5v5.8c0 5.2-3.4 8.7-8.5 10.7-5.1-2-8.5-5.5-8.5-10.7V5.5L12 2.3Z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-    <path d="m12 6.5 5.1 5.3h-3v4.8h-4.2v-4.8h-3L12 6.5Z" fill="currentColor" />
-  </svg>;
+  return <img className="brand-mark" src="/app-icon.png" alt="" aria-hidden="true" />;
 }
 function VideoSourceField({ value, onChange, label }: { value?: string; onChange: (value: string) => void; label: string }) {
   const [loading, setLoading] = useState(false);
