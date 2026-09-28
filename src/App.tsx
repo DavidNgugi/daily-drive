@@ -7,6 +7,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import WorkoutSession, { type SessionDraft, createSessionDraft, loadSessionDraft } from "./WorkoutSession";
+import { formatImportPreview, type ImportPreview } from "./backup-import";
 import "./App.css";
 
 type Measurement = { weight: number | null; waist: number | null };
@@ -562,6 +563,9 @@ function App() {
     setBusy(true); setError("");
     try {
       const contents = await file.text();
+      const preview = await invoke<ImportPreview>("preview_import", { contents });
+      const summary = formatImportPreview(preview);
+      if (!window.confirm(`Review this backup before importing:\n\n${summary}\n\nA safety backup will be created before merging. Import now?`)) return;
       const outcome = await invoke<{ snapshot: Snapshot; session: SessionDraft | null }>("import_data", { contents });
       const imported = outcome.snapshot;
       setState(imported);

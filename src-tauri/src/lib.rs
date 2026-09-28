@@ -5,13 +5,16 @@ use std::{collections::{BTreeMap, BTreeSet}, fs, hash::{Hash, Hasher}, io::{Read
 use tauri::{Emitter, Manager, WindowEvent, menu::{Menu, MenuItem}, tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}};
 use tauri_plugin_autostart::ManagerExt;
 
+mod import_contract;
+mod import_identity;
+
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct Measurement { weight: Option<f32>, waist: Option<f32> }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PlanConfig {
+pub(crate) struct PlanConfig {
     start_date: String,
     end_date: String,
     start_weight: f32,
@@ -39,17 +42,17 @@ struct WorkoutItem { name: String, reps: String, #[serde(default)] duration_seco
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-struct PlannedWorkout { title: String, details: String, items: Vec<WorkoutItem>, rest_day: bool, #[serde(default = "default_session_minutes")] duration_minutes: u32, video_source: String }
+pub(crate) struct PlannedWorkout { title: String, details: String, items: Vec<WorkoutItem>, rest_day: bool, #[serde(default = "default_session_minutes")] duration_minutes: u32, video_source: String }
 
 fn default_session_minutes() -> u32 { 30 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct PlannedMeals { breakfast: String, lunch: String, dinner: String, snacks: String }
+pub(crate) struct PlannedMeals { breakfast: String, lunch: String, dinner: String, snacks: String }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct Schedule { workouts: Vec<PlannedWorkout>, meals: Vec<PlannedMeals>, workout_overrides: BTreeMap<String, PlannedWorkout>, meal_overrides: BTreeMap<String, PlannedMeals> }
+pub(crate) struct Schedule { workouts: Vec<PlannedWorkout>, meals: Vec<PlannedMeals>, workout_overrides: BTreeMap<String, PlannedWorkout>, meal_overrides: BTreeMap<String, PlannedMeals> }
 
 impl Default for Schedule {
     fn default() -> Self {
@@ -80,15 +83,15 @@ impl Default for Schedule {
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-struct UserProfile { name: String, goal: String, preferences: String, equipment: String, availability: String }
+pub(crate) struct UserProfile { name: String, goal: String, preferences: String, equipment: String, availability: String }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-struct ActualWorkout { title: String, details: String, items: Vec<WorkoutItem> }
+pub(crate) struct ActualWorkout { title: String, details: String, items: Vec<WorkoutItem> }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct SavedData {
+pub(crate) struct SavedData {
     alarm_time: String,
     alarm_sound: String,
     tracking_since: String,
@@ -101,18 +104,37 @@ struct SavedData {
     #[serde(default)] profile: Option<UserProfile>,
     #[serde(default)] onboarding_complete: Option<bool>,
     #[serde(default)] actual_workouts: BTreeMap<String, ActualWorkout>,
+    #[serde(default)] import_fingerprints: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ImportFile { format: String, version: u8, data: SavedData, #[serde(default)] videos: Vec<ExportVideo>, #[serde(default)] session: Option<serde_json::Value> }
+pub(crate) struct ImportFile { format: String, version: u8, data: SavedData, #[serde(default)] videos: Vec<ExportVideo>, #[serde(default)] session: Option<serde_json::Value> }
 
 #[derive(Serialize, Deserialize)]
-struct ExportVideo { source: String, contents: String }
+pub(crate) struct ExportVideo { source: String, contents: String }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportResult { snapshot: Snapshot, session: Option<serde_json::Value> }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportPreview {
+    fingerprint: String,
+    has_profile: bool,
+    has_plan: bool,
+    weekly_workout_days: usize,
+    weekly_meal_days: usize,
+    workout_overrides: usize,
+    meal_overrides: usize,
+    completed_days: usize,
+    skipped_days: usize,
+    meal_logs: usize,
+    measurements: usize,
+    actual_workouts: usize,
+    videos: usize,
+}
 
 impl Default for SavedData {
     fn default() -> Self {
@@ -120,7 +142,7 @@ impl Default for SavedData {
             alarm_time: "07:00".into(), alarm_sound: "Sosumi".into(), tracking_since: Local::now().date_naive().to_string(),
             completed: vec![], skipped: BTreeMap::new(),
             measurements: BTreeMap::new(), meals: BTreeMap::new(), plan: PlanConfig::default(),
-            schedule: Schedule::default(), profile: None, onboarding_complete: Some(false), actual_workouts: BTreeMap::new(),
+            schedule: Schedule::default(), profile: None, onboarding_complete: Some(false), actual_workouts: BTreeMap::new(), import_fingerprints: BTreeSet::new(),
         }
     }
 }
@@ -242,7 +264,7 @@ fn youtube_player_page(path: &str, port: u16) -> (&'static str, String) {
     ("200 OK", html)
 }
 
-fn validate_schedule(schedule: &Schedule) -> Result<(), String> {
+pub(crate) fn validate_schedule(schedule: &Schedule) -> Result<(), String> {
     if schedule.workouts.len() != 7 || schedule.meals.len() != 7 {
         return Err("A weekly plan must include all seven days.".into());
     }
@@ -356,6 +378,26 @@ fn save_profile(app: tauri::AppHandle, state: tauri::State<AppState>, name: Stri
 fn get_state(state: tauri::State<AppState>) -> Snapshot { snapshot(&state) }
 
 #[tauri::command]
+fn preview_import(contents: String) -> Result<ImportPreview, String> {
+    let imported = import_contract::parse_and_validate(&contents)?;
+    Ok(ImportPreview {
+        fingerprint: import_identity::fingerprint(contents.as_bytes()),
+        has_profile: imported.data.profile.is_some(),
+        has_plan: true,
+        weekly_workout_days: imported.data.schedule.workouts.len(),
+        weekly_meal_days: imported.data.schedule.meals.len(),
+        workout_overrides: imported.data.schedule.workout_overrides.len(),
+        meal_overrides: imported.data.schedule.meal_overrides.len(),
+        completed_days: imported.data.completed.len(),
+        skipped_days: imported.data.skipped.len(),
+        meal_logs: imported.data.meals.len(),
+        measurements: imported.data.measurements.len(),
+        actual_workouts: imported.data.actual_workouts.len(),
+        videos: imported.videos.len(),
+    })
+}
+
+#[tauri::command]
 fn export_data(state: tauri::State<AppState>, session: Option<serde_json::Value>) -> Result<String, String> {
     let data = state.data.lock().map_err(|e| e.to_string())?;
     let mut sources = BTreeSet::new();
@@ -430,22 +472,7 @@ fn reveal_export_file(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: String) -> Result<ImportResult, String> {
-    let mut imported: ImportFile = serde_json::from_str(&contents).map_err(|_| "This file is not a valid Daily Drive export.".to_string())?;
-    if imported.format != "daily-drive" || ![1, 2].contains(&imported.version) { return Err("This Daily Drive export version is not supported.".into()); }
-    let start = NaiveDate::parse_from_str(&imported.data.plan.start_date, "%Y-%m-%d").map_err(|_| "The export contains an invalid plan date.")?;
-    let end = NaiveDate::parse_from_str(&imported.data.plan.end_date, "%Y-%m-%d").map_err(|_| "The export contains an invalid plan date.")?;
-    if end < start || (end - start).num_days() > 365 || !(30.0..=300.0).contains(&imported.data.plan.start_weight) || !(30.0..=300.0).contains(&imported.data.plan.target_weight) {
-        return Err("The export contains an invalid challenge plan.".into());
-    }
-    validate_schedule(&imported.data.schedule)?;
-    alarm_sound_path(&imported.data.alarm_sound)?;
-    let time = &imported.data.alarm_time;
-    if time.len() != 5 || time.as_bytes().get(2) != Some(&b':') || !time[..2].parse::<u8>().is_ok_and(|h| h < 24) || !time[3..].parse::<u8>().is_ok_and(|m| m < 60) {
-        return Err("The export contains an invalid alarm time.".into());
-    }
-    for date in imported.data.completed.iter().chain(imported.data.skipped.keys()).chain(imported.data.measurements.keys()).chain(imported.data.meals.keys()).chain(imported.data.actual_workouts.keys()) {
-        NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| "The export contains an invalid history date.")?;
-    }
+    let mut imported = import_contract::parse_and_validate(&contents)?;
 
     let mut decoded_videos = Vec::new();
     for video in &imported.videos {
@@ -477,6 +504,11 @@ fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: S
 
     let mut current = state.data.lock().map_err(|e| e.to_string())?;
     let mut merged = current.clone();
+    if !import_identity::mark_imported(&mut merged.import_fingerprints, contents.as_bytes()) {
+        drop(current);
+        let result = snapshot(&state);
+        return Ok(ImportResult { snapshot: result, session: imported.session });
+    }
     merged.alarm_time = imported.data.alarm_time;
     merged.alarm_sound = imported.data.alarm_sound;
     merged.tracking_since = merged.tracking_since.min(imported.data.tracking_since);
@@ -491,6 +523,7 @@ fn import_data(app: tauri::AppHandle, state: tauri::State<AppState>, contents: S
     merged.profile = imported.data.profile;
     merged.onboarding_complete = Some(imported.data.onboarding_complete.unwrap_or(true));
     merged.actual_workouts.extend(imported.data.actual_workouts);
+    merged.import_fingerprints.extend(imported.data.import_fingerprints);
 
     let backup = state.path.with_file_name(format!("progress.backup-import-{}.json", Local::now().format("%Y%m%d-%H%M%S-%3f")));
     if state.path.exists() { fs::copy(&state.path, backup).map_err(|e| format!("Could not back up current history: {e}"))?; }
@@ -793,7 +826,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, export_data, write_export_file, reveal_export_file, import_data, import_workout_video, youtube_embed_url, finish_setup, save_schedule, save_actual_workout, save_profile, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_session_active, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
+        .invoke_handler(tauri::generate_handler![get_state, export_data, preview_import, write_export_file, reveal_export_file, import_data, import_workout_video, youtube_embed_url, finish_setup, save_schedule, save_actual_workout, save_profile, set_alarm_time, set_alarm_sound, preview_alarm_sound, complete_today, snooze_alarm, set_session_active, set_workout_status, save_plan, save_measurement, save_meals, launch_at_login, login_enabled])
         .build(tauri::generate_context!())
         .expect("error while building daily-drive")
         .run(|app, event| {
@@ -843,5 +876,15 @@ mod tests {
         assert_eq!(workout.duration_minutes, 30);
         assert_eq!(workout.items[0].duration_seconds, 0);
         assert_eq!(workout.items[0].rest_seconds, 0);
+    }
+
+    #[test]
+    fn app_csp_keeps_managed_media_and_supported_video_hosts_available() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let csp = config["app"]["security"]["csp"].as_str().unwrap();
+        assert!(csp.contains("media-src 'self' asset: http://asset.localhost blob: https:"));
+        assert!(csp.contains("frame-src 'self' http://127.0.0.1:* https://www.youtube-nocookie.com https://player.vimeo.com"));
+        assert!(csp.contains("connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"));
+        assert!(!csp.contains("default-src *"));
     }
 }
